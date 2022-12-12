@@ -316,10 +316,9 @@ def login_process(__username, __password):
         device_data = req.json()
 
         for i in device_data["deviceList"]:
-            for d in ["MagentaTV Stick", "MagentaTV One", "MagentaTV Box", "MagentaTV Box Play", "WebTV"]:
-                if i.get("deviceName", "") == d:
-                    uu_id = i["physicalDeviceId"]
-                    break
+            if i["deviceName"] == "WebTV":
+                uu_id = i["physicalDeviceId"]
+                break
         
         x = x + 1
         if x > 8:
