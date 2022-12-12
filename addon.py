@@ -41,13 +41,16 @@ def menu_loader(item, auth=False):
     else:
         session = None
         auth_header = header
-    item = f'{item.split("&")[0]}&$size=1000000000&$offset=0&$profile=stageExt' if not "MainMenu" in item else item
+    item = f'{item.split("&")[0]}&$size=1000000000&$offset=0&$profile=stageExt&$deviceModel=WEB-MTV' if not "MainMenu" in item else item
     page = requests.get(item, headers=auth_header)
     return page.json(), session
 
 # Create Kodi menu based on json response
 def menu_creator(item, session):
     menu_listing = []
+
+    if not item.get("$type"):
+        return
 
     # (Main) Menu
     if item["$type"] == "menu":
@@ -64,7 +67,7 @@ def menu_creator(item, session):
                 li = xbmcgui.ListItem(label=i['title'])
                 if len(i.get("technicalTiles", [])) > 0:
                     if i["technicalTiles"][0]["teaser"]["title"] == "Alle anzeigen" and i["title"] != "MEGATHEK: GENRES":
-                        li.setInfo("video", {'plot': i["technicalTiles"][0]["teaser"]["description"]})
+                        li.setInfo("video", {'plot': i["technicalTiles"][0]["teaser"].get("description")})
                         url = build_url({"url": i["technicalTiles"][0]["teaser"]["details"]["href"]})
                     else:
                         url = build_url({"url": i["laneContentLink"]["href"]})
@@ -76,9 +79,15 @@ def menu_creator(item, session):
     if item["$type"] in ("unstructuredgrid", "unstructuredgridlane"):
         for i in item["content"]["items"]:
             if i["type"] in ("Asset", "Teaser"):
-                url = build_url({"url": i["details"]["href"]})
+                if i.get("details"):
+                    url = build_url({"url": i["details"]["href"]})
+                elif i.get("buttons"):
+                    url = build_url({"url": i["buttons"][0]["details"]["href"]})
                 if i["type"] == "Teaser":
-                    li = xbmcgui.ListItem(label=i['stageTitle'])
+                    if i.get("stageTitle"):
+                        li = xbmcgui.ListItem(label=i['stageTitle'])
+                    else:
+                        li = xbmcgui.ListItem(label=i['title'])
                 else:
                     if i.get("seriesTitle") and i["vodType"] == "Season":
                         li = xbmcgui.ListItem(label=f"{i['seriesTitle']} - {i['title']}")    
@@ -86,24 +95,21 @@ def menu_creator(item, session):
                         li = xbmcgui.ListItem(label=i['title'])
                 if i["type"] in ("Asset", "Teaser"):
                     li.setInfo("video", {'plot': i.get("longDescription", i.get("description"))})
-                    li.setArt({"thumb": i["image"]["href"], "fanart": i["image"]["href"]})
+                    li.setArt({"thumb": i.get("image", i.get("stageImage", {"href": ""}))["href"], "fanart": i.get("image", i.get("stageImage", {"href": ""}))["href"]})
                 menu_listing.append((url, li, True))
 
     # Asset Details
     if item["$type"] == "assetdetails":
 
-        
-
         # SEASON
         if item["content"]["type"] in ("Season", "Series"):
-            # MAIN
             for i in item["content"]["partnerInformation"]:
-                if i["name"] == "MEGATHEK":
+                # if i["name"] == "MEGATHEK":
                     for a in item["content"]["multiAssetInformation"]["subAssetDetails"]:
                         if item["content"]["type"] == "Series":
-                            li = xbmcgui.ListItem(label=f'{item["content"]["contentInformation"]["title"]} - {a["contentInformation"]["title"]}')
+                            li = xbmcgui.ListItem(label=f'{item["content"]["contentInformation"]["title"]} - {a["contentInformation"]["title"]} ({i["name"]})')
                         if item["content"]["type"] == "Season":
-                            li = xbmcgui.ListItem(label=f'{item["content"]["multiAssetInformation"]["seriesTitle"]} - {a["contentInformation"]["title"]}')
+                            li = xbmcgui.ListItem(label=f'{item["content"]["multiAssetInformation"]["seriesTitle"]} - {a["contentInformation"]["title"]} ({i["name"]})')
                         li.setInfo("video", {'plot': a["contentInformation"].get("description")})
                         if len(a["contentInformation"]["images"]) > 1:
                             li.setArt({"thumb": a["contentInformation"]["images"][0]["href"], "fanart": a["contentInformation"]["images"][-1]["href"]})
@@ -112,24 +118,25 @@ def menu_creator(item, session):
                         if item["content"]["type"] == "Series":
                             url = build_url({"url": a["contentInformation"]["detailPage"]["href"]})
                             menu_listing.append((url, li, True))
-                        if len(a["partnerInformation"]) > 0 and len(a["partnerInformation"][0]["features"]) > 0 and item["content"]["type"] == "Season":
+                        if len(a["partnerInformation"]) > 0 and a["partnerInformation"][0].get("features", False) and len(a["partnerInformation"][0]["features"]) > 0 and item["content"]["type"] == "Season":
                             url = build_url({"url": a["partnerInformation"][0]["features"][0]["player"]["href"], "auth": True})
                             menu_listing.append((url, li, False))
 
-        # MOVIE 
-        if item["content"]["type"] == "Movie":
+        # MOVIE / EPISODE
+        if item["content"]["type"] in ("Movie", "Episode"):
             # MAIN
             for i in item["content"]["partnerInformation"]:
-                if i["name"] == "MEGATHEK":
+                # if i["name"] == "MEGATHEK":
                     for a in i["features"]:
-                        li = xbmcgui.ListItem(label=a["featureType"])
+                        li = xbmcgui.ListItem(label=f'{a["featureType"]} ({i["name"]})')
                         li.setInfo("video", {'plot': item["content"]["contentInformation"].get("longDescription", item["content"]["contentInformation"].get("description"))})
                         if len(item["content"]["contentInformation"]["images"]) > 1:
                             li.setArt({"thumb": item["content"]["contentInformation"]["images"][0]["href"], "fanart": item["content"]["contentInformation"]["images"][-1]["href"]})
                         else:
                             li.setArt({"thumb": item["content"]["contentInformation"]["images"][0]["href"], "fanart": item["content"]["contentInformation"]["images"][0]["href"]})
                         url = build_url({"url": a["player"]["href"], "auth": True})
-                        menu_listing.append((url, li, False))
+                        if i["buyPrice"] == 0:
+                            menu_listing.append((url, li, False))
             # TRAILER
             for i in item["content"]["contentInformation"]["trailers"]:
                 li = xbmcgui.ListItem(label="Trailer")
@@ -144,7 +151,7 @@ def menu_creator(item, session):
     # Player
     if item["$type"] == "player":
         for i in item["content"]["feature"]["representations"]:
-            if i["type"] in ("MpegDash", "MpegDashTranscoded"):
+            if i["type"] in ("MpegDash", "MpegDashTranscoded") and len(i["contentPackages"]) > 0:
                 url = i["contentPackages"][0]["media"]["href"]
                 c_no = i["contentPackages"][0]["contentNumber"]
                 if i["quality"] == "HD":
