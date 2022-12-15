@@ -1,7 +1,8 @@
 from base64 import b64encode
 from bs4 import BeautifulSoup
+from datetime import datetime
 from uuid import uuid4
-import requests, sys, urllib, xmltodict
+import hashlib, platform, requests, sys, urllib, xmltodict
 import xbmc, xbmcaddon, xbmcgui, xbmcplugin, xbmcvfs
 
 
@@ -41,7 +42,7 @@ def menu_loader(item, auth=False):
     else:
         session = None
         auth_header = header
-    item = f'{item.split("&")[0]}&$size=1000000000&$offset=0&$profile=stageExt&$deviceModel=WEB-MTV' if not "MainMenu" in item else item
+    item = f'{item.split("&")[0]}&info:bandwidth=20000&info:hdcpVersion=2.2&info:modelId=MR401&info:hdrVersion=HDR10;HLG;Dolby+Vision&$size=1000000000&$offset=0&$profile=stageExt&$deviceModel=WEB-MTV' if not "MainMenu" in item else item
     page = requests.get(item, headers=auth_header)
     return page.json(), session
 
@@ -150,12 +151,20 @@ def menu_creator(item, session):
 
     # Player
     if item["$type"] == "player":
+        q = dict()
         for i in item["content"]["feature"]["representations"]:
             if i["type"] in ("MpegDash", "MpegDashTranscoded") and len(i["contentPackages"]) > 0:
-                url = i["contentPackages"][0]["media"]["href"]
-                c_no = i["contentPackages"][0]["contentNumber"]
-                if i["quality"] == "HD":
-                    break
+                q[i["quality"]] = {"url": i["contentPackages"][0]["media"]["href"], "c_no": i["contentPackages"][0]["contentNumber"]}
+        if platform.system() == "Linux":
+            url = q["SD"]["url"]
+            c_no = q["SD"]["c_no"]
+        else:
+            if q.get("UHD"):
+                url = q["UHD"]["url"]
+                c_no = q["UHD"]["c_no"]
+            else:
+                url = q.get("HD", q["SD"])["url"]
+                c_no = q.get("HD", q["SD"])["c_no"]
         
         if session is not None:
             auth_header = {"authorization": f'TAuth realm="ngtvvod",tauth_token="{session["access_token"]}"', "x-device-authorization": f'TAuth realm="device",device_token="{session["deviceToken"]}"'}
@@ -241,6 +250,9 @@ def login_process(__username, __password):
 
     session = dict()
     uu_id = str(uuid4())
+    cnonce = hashlib.md5()
+    cnonce.update(f'{str(datetime.now().timestamp()).replace(".", "")[0:-3]}:00'.encode())
+    cnonce = cnonce.hexdigest()
     
 
     #
@@ -289,7 +301,7 @@ def login_process(__username, __password):
 
     # STEP 7: EPG USER AUTH - ALL SESSIONS
     url = 'https://api.prod.sngtv.magentatv.de/EPG/JSON/Authenticate?SID=firstup&T=Windows_chrome_86'
-    data = '{"terminalid":"' + uu_id + '","mac":"' + uu_id + '","terminaltype":"WEBTV","utcEnable":1,"timezone":"UTC","userType":3,"terminalvendor":"Unknown","preSharedKeyID":"PC01P00002","cnonce":"aa29eb89d78894464ab9ad3e4797eff6"}'
+    data = '{"terminalid":"' + uu_id + '","mac":"' + uu_id + '","terminaltype":"WEBTV","utcEnable":1,"timezone":"UTC","userType":3,"terminalvendor":"Unknown","preSharedKeyID":"PC01P00002","cnonce":"' + cnonce + '"}'
     epg_cookies = {"JSESSIONID": j_session}
 
     req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
@@ -300,7 +312,7 @@ def login_process(__username, __password):
     while True:
         # 8.1: AUTHENTICATE
         url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/DTAuthenticate"
-        data = '{"areaid":"1","cnonce":"aa29eb89d78894464ab9ad3e4797eff6","mac":"' + uu_id + '","preSharedKeyID":"NGTV000001","subnetId":"4901","templatename":"NGTV","terminalid":"' + uu_id + '","terminaltype":"WEB-MTV","terminalvendor":"WebTV","timezone":"Europe/Berlin","usergroup":"OTT_NONDTISP_DT","userType":"1","utcEnable":1,"accessToken":"' + f'{bearer["access_token"]}' + '","caDeviceInfo":[{"caDeviceId":"' + uu_id + '","caDeviceType":8}],"connectType":1,"osversion":"Windows 10","softwareVersion":"1.63.2","terminalDetail":[{"key":"GUID","value":"' + uu_id + '"},{"key":"HardwareSupplier","value":"WEB-MTV"},{"key":"DeviceClass","value":"TV"},{"key":"DeviceStorage","value":0},{"key":"DeviceStorageSize","value":0}]}'
+        data = '{"areaid":"1","cnonce":"' + cnonce + '","mac":"' + uu_id + '","preSharedKeyID":"NGTV000001","subnetId":"4901","templatename":"NGTV","terminalid":"' + uu_id + '","terminaltype":"WEB-MTV","terminalvendor":"WebTV","timezone":"Europe/Berlin","usergroup":"OTT_NONDTISP_DT","userType":"1","utcEnable":1,"accessToken":"' + f'{bearer["access_token"]}' + '","caDeviceInfo":[{"caDeviceId":"' + uu_id + '","caDeviceType":8}],"connectType":1,"osversion":"Windows 10","softwareVersion":"1.63.2","terminalDetail":[{"key":"GUID","value":"' + uu_id + '"},{"key":"HardwareSupplier","value":"WEB-MTV"},{"key":"DeviceClass","value":"TV"},{"key":"DeviceStorage","value":0},{"key":"DeviceStorageSize","value":0}]}'
 
         req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
         user_data = req.json()
