@@ -155,16 +155,16 @@ def menu_creator(item, session):
         for i in item["content"]["feature"]["representations"]:
             if i["type"] in ("MpegDash", "MpegDashTranscoded") and len(i["contentPackages"]) > 0:
                 q[i["quality"]] = {"url": i["contentPackages"][0]["media"]["href"], "c_no": i["contentPackages"][0]["contentNumber"]}
-        if platform.system() == "Linux":
-            url = q["SD"]["url"]
-            c_no = q["SD"]["c_no"]
-        else:
+        if hasattr(sys, "getandroidapilevel") or platform.system() == "Windows":
             if q.get("UHD"):
                 url = q["UHD"]["url"]
                 c_no = q["UHD"]["c_no"]
             else:
                 url = q.get("HD", q["SD"])["url"]
                 c_no = q.get("HD", q["SD"])["c_no"]
+        else:
+            url = q["SD"]["url"]
+            c_no = q["SD"]["c_no"]
         
         if session is not None:
             auth_header = {"authorization": f'TAuth realm="ngtvvod",tauth_token="{session["access_token"]}"', "x-device-authorization": f'TAuth realm="device",device_token="{session["deviceToken"]}"'}
