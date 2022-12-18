@@ -23,21 +23,138 @@ header = {
     "Content-Type": "application/x-www-form-urlencoded"}
 
 #
-# MENU
+# TV MENU
+#
+
+def tv_browser(url=None):
+    
+    session = login("ngtvepg")
+    enable_e = __addon__.getSetting("e")
+    enable_s = __addon__.getSetting("s")
+
+    ch_list = get_channel_list(session, enable_e, enable_s)
+
+    if url is None:
+        tv_menu_creator(ch_list)
+    else:
+        get_channel(url, session)
+
+# RETRIEVE THE CHANNEL DICT
+def get_channel_list(session, enable_e, enable_s):
+    
+    url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/AllChannel"
+    data = '{"channelNamespace":"12","filterlist":[{"key":"IsHide","value":"-1"}],"metaDataVer":"Channel/1.1","properties":[{"include":"/channellist/logicalChannel/contentId,/channellist/logicalChannel/name,/channellist/logicalChannel/chanNo,/channellist/logicalChannel/externalCode,/channellist/logicalChannel/categoryIds,/channellist/logicalChannel/introduce,/channellist/logicalChannel/pictures/picture/href,/channellist/logicalChannel/pictures/picture/imageType,/channellist/logicalChannel/physicalChannels/physicalChannel/mediaId,/channellist/logicalChannel/physicalChannels/physicalChannel/definition,/channellist/logicalChannel/physicalChannels/physicalChannel/externalCode,/channellist/logicalChannel/physicalChannels/physicalChannel/fileFormat","name":"logicalChannel"}],"returnSatChannel":0}'
+    epg_cookies = session["cookies"]
+    header.update({"X_CSRFToken": session["cookies"]["CSRFSESSION"]})
+
+    req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
+
+    ch_list = {i["contentId"]: {"name": i["name"], "img": i["pictures"][0]["href"], "media": {
+        m["mediaId"]: m["externalCode"] for m in i["physicalChannels"]}} for i in req.json()["channellist"]}
+
+    request_string = ""
+    for i in ch_list.keys():
+        request_string = request_string + '{"channelId":"' + i + '","type":"VIDEO_CHANNEL"},'
+    request_string = request_string[:-1]
+
+    url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/AllChannelDynamic"
+    data = '{"channelIdList":[' + request_string + '],"channelNamespace":"12","filterlist":[{"key":"IsHide","value":"-1"}],"properties":[{"include":"/channelDynamicList/logicalChannelDynamic/contentId,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/mediaId,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/playurl,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/btvBR,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/btvCR,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/cpvrRecBR,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/cpvrRecCR,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/pltvCR,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/pltvBR,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/irCR,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/irBR,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/npvrRecBR,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/npvrRecCR,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/npvrOnlinePlayCR,/channelDynamicList/logicalChannelDynamic/physicalChannels/physicalChannelDynamic/npvrOnlinePlayBR","name":"logicalChannelDynamic"}]}'
+    epg_cookies = session["cookies"]
+    header.update({"X_CSRFToken": session["cookies"]["CSRFSESSION"]})
+
+    req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
+    dynamic_list = req.json()["channelDynamicList"]
+
+    add_url = "https://raw.githubusercontent.com/sunsettrack4/script.service.magentatv/master/channels.json"
+    add_req = requests.get(add_url)
+    add_dict = add_req.json()
+
+    for entry in dynamic_list:
+        ch = ch_list[entry['contentId']]
+        for pchannel in entry['physicalChannels']:
+            if "playurl" not in pchannel:
+                if enable_e == "true":
+                    if add_dict["e"].get(pchannel['mediaId']):
+                        ch['playurl'] = f"https://svc40.main.sl.t-online.de/LCID3221228{add_dict['e'][pchannel['mediaId']]}.originalserver.prod.sngtv.t-online.de/PLTV/88888888/224/3221228{add_dict['e'][pchannel['mediaId']]}/3221228{add_dict['e'][pchannel['mediaId']]}.mpd"
+                if enable_s == "true":
+                    if add_dict["s"].get(pchannel['mediaId']):
+                        ch['playurl'] = f"https://svc40.main.sl.t-online.de/LCID3221228{add_dict['s'][pchannel['mediaId']]}.originalserver.prod.sngtv.t-online.de/PLTV/88888888/224/3221228{add_dict['s'][pchannel['mediaId']]}/3221228{add_dict['s'][pchannel['mediaId']]}.mpd"
+                break
+            playurl = pchannel['playurl']
+            manifest_name = ch["media"][pchannel['mediaId']]
+            if "DASH_OTT-FOUR_K" in manifest_name:
+                ch['playurl_4k'] = playurl
+                continue
+            if "DASH_OTT-HD" in manifest_name:
+                ch['playurl'] = playurl
+                break
+            elif "DASH_OTT-SD" in manifest_name:
+                ch['playurl'] = playurl
+    
+    return ch_list
+
+# CREATE THE CHANNEL LIST
+def tv_menu_creator(ch_list):
+    menu_listing = []
+
+    for channel_id, ch in ch_list.items():
+        if ch.get("playurl_4k"):
+            li = xbmcgui.ListItem(label=f"{ch['name']} UHD")
+            url = build_url({"tv_url": ch["playurl_4k"]})
+            li.setArt({"thumb": ch["img"]})
+            menu_listing.append((url, li, False))
+        if ch.get("playurl"):
+            li = xbmcgui.ListItem(label=ch['name'])
+            url = build_url({"tv_url": ch["playurl"]})
+            li.setArt({"thumb": ch["img"]})
+            menu_listing.append((url, li, False))
+
+    xbmcplugin.addDirectoryItems(__addon_handle__, menu_listing, len(menu_listing))
+    xbmcplugin.endOfDirectory(__addon_handle__)
+
+# PLAYBACK CHANNEL
+def get_channel(url, session):
+    
+    license_url = "https://vmxdrmfklb1.sfm.t-online.de:8063/"
+    li = xbmcgui.ListItem(path=url)        
+
+    device_id = session["deviceId"]
+
+    li.setProperty('inputstream.adaptive.license_key', f"{license_url}|deviceId={device_id}|R" + "{SSM}|")
+    li.setProperty('inputstream.adaptive.license_type', "com.widevine.alpha")
+
+    li.setProperty('inputstream', 'inputstream.adaptive')
+    li.setProperty('inputstream.adaptive.manifest_type', 'mpd')
+    li.setProperty("IsPlayable", "true")
+
+    li.setInfo("video", {"title": xbmc.getInfoLabel("ListItem.Label")})
+    li.setArt({'thumb': xbmc.getInfoLabel("ListItem.Thumb")})
+
+    xbmcplugin.setResolvedUrl(__addon_handle__, True, li)
+
+    xbmc.Player().play(item=url, listitem=li)
+    return
+
+
+#
+# VOD MENU
 #
 
 # Main Menu
 main_query = "whiteLabelId=webClient&$deviceModel=WEB-MTV&$partnerMap=entertaintvOTT_WEB&$profile=stageExt&$subscriberType=OTT_NONDTISP_DT"
+
 main_url = f"https://tvhubs.t-online.de/v2/iptv2015acc/DocumentGroupRedirect/TVHS_DG_MainMenu?{main_query}"
+my_url = f"https://tvhubs.t-online.de/v2/iptv2015acc/DocumentGroupRedirect/TVHS_DG_Einstieg_Meine-Inhalte_MTV?{main_query}"
+wl_url = f"https://tvhubs.t-online.de/v2/iptv2015acc/DocumentGroupRedirect/TVHS_DG_Einstieg_Merkliste_MTV?{main_query}"
 
 # Get the addon url based on Kodi request
 def build_url(query):
     return f"{base_url}?{urllib.parse.urlencode(query)}"
 
 # Load menu item(s)
-def menu_loader(item, auth=False):
-    if auth:
-        session = login()
+def menu_loader(item, auth):
+    if auth is True:
+        session = login("ngtvvod")
         auth_header = {"authorization": f'TAuth realm="ngtvvod",tauth_token="{session["access_token"]}"'}
     else:
         session = None
@@ -53,27 +170,41 @@ def menu_creator(item, session):
     if not item.get("$type"):
         return
 
-    # (Main) Menu
+    # Main Menu
     if item["$type"] == "menu":
         for i in item["menuItems"]:
             if "https" in i["screen"]["href"]:
                 li = xbmcgui.ListItem(label=i['title'])
                 url = build_url({"url": i["screen"]["href"]})
                 menu_listing.append((url, li, True))
+
+    # Tag
+    if item["$type"] == "tag":
+        for b in item["content"]["items"]:
+            if b.get("assetDetails"):
+                if b["assetDetails"]["type"] in ("Movie", "Series", "Season", "Episode"):
+                    li = xbmcgui.ListItem(label=f'{b["assetDetails"]["multiAssetInformation"]["seriesTitle"] + " - " if b["assetDetails"]["type"] in ("Episode", "Season") else ""}{b["assetDetails"]["multiAssetInformation"]["seasonTitle"] + " - " if b["assetDetails"]["type"] == "Episode" else ""}{b["assetDetails"]["contentInformation"]["title"]}')
+                    li.setInfo("video", {'plot': b["assetDetails"]["contentInformation"].get("longDescription", b["assetDetails"]["contentInformation"].get("description"))})
+                    if len(b["assetDetails"]["contentInformation"]["images"]) > 1:
+                        li.setArt({"thumb": b["assetDetails"]["contentInformation"]["images"][0]["href"], "fanart": b["assetDetails"]["contentInformation"]["images"][-1]["href"]})
+                    else:
+                        li.setArt({"thumb": b["assetDetails"]["contentInformation"]["images"][0]["href"], "fanart": b["assetDetails"]["contentInformation"]["images"][0]["href"]})
+                    url = build_url({"url": b["assetDetails"]["contentInformation"]["detailPage"]["href"]})
+                    menu_listing.append((url, li, True))
     
     # Structured Grid
     if item["$type"] == "structuredgrid":
         for i in item["content"]["lanes"]:
-            if i["type"] == "UnstructuredGrid":
+            if i["type"] in ("UnstructuredGrid", "MyMovies", "Watchlist"):
                 li = xbmcgui.ListItem(label=i['title'])
-                if len(i.get("technicalTiles", [])) > 0:
+                if len(i.get("technicalTiles", [])) > 0 and not i["type"] in ("MyMovies", "Watchlist"):
                     if i["technicalTiles"][0]["teaser"]["title"] == "Alle anzeigen" and i["title"] != "MEGATHEK: GENRES":
                         li.setInfo("video", {'plot': i["technicalTiles"][0]["teaser"].get("description")})
                         url = build_url({"url": i["technicalTiles"][0]["teaser"]["details"]["href"]})
                     else:
                         url = build_url({"url": i["laneContentLink"]["href"]})
                 else:
-                    url = build_url({"url": i["laneContentLink"]["href"]})
+                    url = build_url({"url": i["laneContentLink"]["href"], "auth": True if session is not None else False})
                 menu_listing.append((url, li, True))
 
     # Unstructured Grid
@@ -125,6 +256,7 @@ def menu_creator(item, session):
 
         # MOVIE / EPISODE
         if item["content"]["type"] in ("Movie", "Episode"):
+
             # MAIN
             for i in item["content"]["partnerInformation"]:
                 # if i["name"] == "MEGATHEK":
@@ -138,6 +270,7 @@ def menu_creator(item, session):
                         url = build_url({"url": a["player"]["href"], "auth": True})
                         if i["buyPrice"] == 0:
                             menu_listing.append((url, li, False))
+
             # TRAILER
             for i in item["content"]["contentInformation"]["trailers"]:
                 li = xbmcgui.ListItem(label="Trailer")
@@ -206,19 +339,66 @@ def menu_creator(item, session):
     xbmcplugin.addDirectoryItems(__addon_handle__, menu_listing, len(menu_listing))
     xbmcplugin.endOfDirectory(__addon_handle__)
 
+
+#
+# ROUTER
+#
+
 # Router function calling other functions of this script
 def router(item):
+
+    def vod_browser():
+        m = menu_loader(url, auth)
+        menu_creator(m[0], m[1])
+
     params = dict(urllib.parse.parse_qsl(item[1:]))
+    menu_listing = []
 
     if params:
-        url = params.get("url", main_url)
-        auth = params.get("auth", False)
-    else:
-        url = main_url
-        auth = False
+        # VOD BROWSER - MAIN MENU
+        if params.get("feature", "") == "VOD":
+            url = main_url
+            auth = False
+            vod_browser()
 
-    m = menu_loader(url, auth)
-    menu_creator(m[0], m[1])
+        # LIVE TV
+        elif params.get("feature", "") == "TV":
+            tv_browser()
+
+        # MY CONTENTS
+        elif params.get("feature", "") == "ML":
+            url = my_url
+            auth = True
+            vod_browser()
+
+        # MY WATCHLIST
+        elif params.get("feature", "") == "WL":
+            url = wl_url
+            auth = True
+            vod_browser()
+
+        # VOD BROWSER - SUBMENU
+        elif params.get("url"):
+            url = params["url"]
+            if params.get("auth"):
+                auth = True if params["auth"] == "True" else False
+            else:
+                auth = False
+            vod_browser()
+
+        # LIVE TV STREAM
+        elif params.get("tv_url"):
+            tv_browser(params["tv_url"])
+
+    else:
+        # MAIN MENU
+        for i in [("Video on Demand", "VOD"), ("Live TV", "TV"), ("Meine Inhalte", "ML"), ("Meine Merkliste", "WL")]:
+            li = xbmcgui.ListItem(label=i[0])
+            url = build_url({"feature": i[1]})
+            menu_listing.append((url, li, True))
+
+        xbmcplugin.addDirectoryItems(__addon_handle__, menu_listing, len(menu_listing))
+        xbmcplugin.endOfDirectory(__addon_handle__)
     
 
 #
@@ -226,10 +406,10 @@ def router(item):
 #
 
 # LOGIN TO WEBSERVICE, SAVE TOKENS AND DEVICE ID
-def login():
+def login(scope):
     __login = __addon__.getSetting("username")
     __password = __addon__.getSetting("password")
-    return refresh_process(login_process(__login, __password))
+    return refresh_process(login_process(__login, __password), scope)
 
 # RETRIEVE HIDDEN XSRF + TID VALUES TO BE TRANSMITTED TO ACCOUNTS PAGE
 def parse_input_values(content):
@@ -340,14 +520,18 @@ def login_process(__username, __password):
     # SETUP SESSION
     session.update({"deviceId": req.json()["caDeviceInfo"][0]["VUID"]})  # DEVICE/TERMINAL ID
     session.update(bearer)  # TOKENS (SCOPE: NGTVEPG)
+    session.update({"cookies": req.cookies.get_dict()})  # EPG COOKIES
     
     # RETURN USER-SPECIFIC COOKIE VALUES
     return session
 
 # REFRESH SESSION FOR VOD
-def refresh_process(session):
+def refresh_process(session, scope):
+    if scope == "ngtvepg":
+        return session
+
     url = "https://accounts.login.idm.telekom.com/oauth2/tokens"
-    data = {"scope": "ngtvvod", "grant_type": "refresh_token", "refresh_token": session['refresh_token'], "client_id": "10LIVESAM30000004901NGTVMAGENTA000000000"}
+    data = {"scope": scope, "grant_type": "refresh_token", "refresh_token": session['refresh_token'], "client_id": "10LIVESAM30000004901NGTVMAGENTA000000000"}
 
     req = requests.post(url, data=data, headers=header)
 
