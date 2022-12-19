@@ -1,8 +1,8 @@
 from base64 import b64encode
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
-import hashlib, platform, requests, sys, urllib, xmltodict
+import hashlib, platform, requests, sys, tzlocal, urllib, xmltodict
 import xbmc, xbmcaddon, xbmcgui, xbmcplugin, xbmcvfs
 
 
@@ -35,7 +35,7 @@ def tv_browser(url=None):
     ch_list = get_channel_list(session, enable_e, enable_s)
 
     if url is None:
-        tv_menu_creator(ch_list)
+        tv_menu_creator(ch_list, session)
     else:
         get_channel(url, session)
 
@@ -94,19 +94,58 @@ def get_channel_list(session, enable_e, enable_s):
     return ch_list
 
 # CREATE THE CHANNEL LIST
-def tv_menu_creator(ch_list):
+def tv_menu_creator(ch_list, session):
     menu_listing = []
+    epg_dict = dict()
+    local_timezone = tzlocal.get_localzone()
+
+    # EPG CONTENT
+    def get_image(list_item):
+        if list_item and len(list_item) > 0:
+            resolutions = ["1920", "1440", "1280", "960", "720", "480", "360", "180"]
+            for resolution in resolutions:
+                for image in list_item:
+                    if image.get("resolution", ["0", "0"])[0] == resolution:
+                        return image.get("href", None)
+        return None
+
+    time_start = str(datetime.now().replace(tzinfo=local_timezone).astimezone(timezone.utc).strftime("%Y%m%d%H%M%S"))
+    time_end = str(((datetime.now().replace(tzinfo=local_timezone).astimezone(timezone.utc)) + timedelta(minutes=1)).strftime("%Y%m%d%H%M%S"))
+
+    url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/PlayBillList"
+    guide_data = f'{{"type":2,"isFiltrate":0,"orderType":4,"isFillProgram":1,"channelNamespace":"2","offset":0,' \
+                     f'"count":-1,"properties":[{{"name":"playbill","include":"subName,id,name,starttime,endtime,' \
+                     f'channelid,ratingid,genres,introduce,cast,genres,country,pictures,producedate,' \
+                     f'seasonNum,subNum"}}],' \
+                     f'"endtime":"{time_end}",' \
+                     f'"begintime":"{time_start}"}}'
+
+    req = requests.post(url, data=guide_data, cookies=session["cookies"], headers={"X_CSRFToken": session["cookies"]["CSRFSESSION"]})
+    epg = req.json()
+
+    for programme in epg["playbilllist"]:
+        if not epg_dict.get(programme["channelid"], False):
+            epg_dict[programme["channelid"]] = []
+        epg_dict[programme["channelid"]].append(
+            {"s": programme["starttime"], 
+             "e": programme["endtime"],
+             "d": programme.get("introduce", "Keine Sendungsdaten vorhanden"),
+             "i": get_image(programme.get("pictures")),
+             "t": programme.get("name", "")})
 
     for channel_id, ch in ch_list.items():
         if ch.get("playurl_4k"):
             li = xbmcgui.ListItem(label=f"{ch['name']} UHD")
             url = build_url({"tv_url": ch["playurl_4k"]})
-            li.setArt({"thumb": ch["img"]})
-            menu_listing.append((url, li, False))
         if ch.get("playurl"):
             li = xbmcgui.ListItem(label=ch['name'])
             url = build_url({"tv_url": ch["playurl"]})
+        if ch.get("playurl") or ch.get("playurl_4k"):
             li.setArt({"thumb": ch["img"]})
+            if epg_dict.get(channel_id):
+                info = '[B]' + epg_dict[channel_id][0]['t'] + '[/B] (' + datetime.strptime(epg_dict[channel_id][0]['s'].split(' UTC')[0], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc).astimezone(local_timezone).strftime('%H:%M') + ' - ' + datetime.strptime(epg_dict[channel_id][0]['e'].split(' UTC')[0], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc).astimezone(local_timezone).strftime('%H:%M') + ' Uhr)\n\n' + epg_dict[channel_id][0]['d']
+                li.setArt({"thumb": ch["img"], "fanart": epg_dict[channel_id][0]['i'] if epg_dict[channel_id][0]['i'] is not None else ch["img"]})
+                li.setInfo("video", {'plot': info})
             menu_listing.append((url, li, False))
 
     xbmcplugin.addDirectoryItems(__addon_handle__, menu_listing, len(menu_listing))
@@ -127,7 +166,7 @@ def get_channel(url, session):
     li.setProperty('inputstream.adaptive.manifest_type', 'mpd')
     li.setProperty("IsPlayable", "true")
 
-    li.setInfo("video", {"title": xbmc.getInfoLabel("ListItem.Label")})
+    li.setInfo("video", {"title": xbmc.getInfoLabel("ListItem.Label"), "plot": xbmc.getInfoLabel("ListItem.Plot")})
     li.setArt({'thumb': xbmc.getInfoLabel("ListItem.Thumb")})
 
     xbmcplugin.setResolvedUrl(__addon_handle__, True, li)
@@ -492,7 +531,7 @@ def login_process(__username, __password):
     while True:
         # 8.1: AUTHENTICATE
         url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/DTAuthenticate"
-        data = '{"areaid":"1","cnonce":"' + cnonce + '","mac":"' + uu_id + '","preSharedKeyID":"NGTV000001","subnetId":"4901","templatename":"NGTV","terminalid":"' + uu_id + '","terminaltype":"WEB-MTV","terminalvendor":"WebTV","timezone":"Europe/Berlin","usergroup":"OTT_NONDTISP_DT","userType":"1","utcEnable":1,"accessToken":"' + f'{bearer["access_token"]}' + '","caDeviceInfo":[{"caDeviceId":"' + uu_id + '","caDeviceType":8}],"connectType":1,"osversion":"Windows 10","softwareVersion":"1.63.2","terminalDetail":[{"key":"GUID","value":"' + uu_id + '"},{"key":"HardwareSupplier","value":"WEB-MTV"},{"key":"DeviceClass","value":"TV"},{"key":"DeviceStorage","value":0},{"key":"DeviceStorageSize","value":0}]}'
+        data = '{"areaid":"1","cnonce":"' + cnonce + '","mac":"' + uu_id + '","preSharedKeyID":"NGTV000001","subnetId":"4901","templatename":"NGTV","terminalid":"' + uu_id + '","terminaltype":"WEB-MTV","terminalvendor":"WebTV","timezone":"UTC","usergroup":"OTT_NONDTISP_DT","userType":"1","utcEnable":1,"accessToken":"' + f'{bearer["access_token"]}' + '","caDeviceInfo":[{"caDeviceId":"' + uu_id + '","caDeviceType":8}],"connectType":1,"osversion":"Windows 10","softwareVersion":"1.63.2","terminalDetail":[{"key":"GUID","value":"' + uu_id + '"},{"key":"HardwareSupplier","value":"WEB-MTV"},{"key":"DeviceClass","value":"TV"},{"key":"DeviceStorage","value":0},{"key":"DeviceStorageSize","value":0}]}'
 
         req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
         user_data = req.json()
