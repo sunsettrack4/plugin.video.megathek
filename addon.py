@@ -1,8 +1,8 @@
-from base64 import b64encode
+from base64 import b64encode, b64decode
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
-import hashlib, platform, requests, sys, tzlocal, urllib, xmltodict
+import hashlib, hmac, platform, requests, sys, tzlocal, urllib, xmltodict
 import xbmc, xbmcaddon, xbmcgui, xbmcplugin, xbmcvfs
 
 
@@ -17,10 +17,70 @@ lang = "de" if xbmc.getLanguage(xbmc.ISO_639_1) == "de" else "en"
 
 xbmcplugin.setContent(__addon_handle__, 'videos')
 
+# TIME ZONE
+local_timezone = tzlocal.get_localzone()
+
 # DEFAULT HEADER
 header = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
     "Content-Type": "application/x-www-form-urlencoded"}
+
+# EPG CONTENT
+def get_image(list_item):
+    if list_item and len(list_item) > 0:
+        resolutions = ["1920", "1440", "1280", "960", "720", "480", "360", "180"]
+        for resolution in resolutions:
+            for image in list_item:
+                if image.get("resolution", ["0", "0"])[0] == resolution:
+                    return image.get("href", None)
+    return None
+
+# PLAYBACK CHANNEL
+def get_channel(url, session, enable_ts=False):
+    
+    license_url = "https://vmxdrmfklb1.sfm.t-online.de:8063/"
+    li = xbmcgui.ListItem(path=url)        
+
+    device_id = session["deviceId"]
+
+    li.setProperty('inputstream.adaptive.license_key', f"{license_url}|deviceId={device_id}|R" + "{SSM}|")
+    li.setProperty('inputstream.adaptive.license_type', "com.widevine.alpha")
+
+    li.setProperty('inputstream', 'inputstream.adaptive')
+    li.setProperty('inputstream.adaptive.manifest_type', 'mpd')
+    li.setProperty("IsPlayable", "true")
+
+    li.setInfo("video", {"title": xbmc.getInfoLabel("ListItem.Label"), "plot": xbmc.getInfoLabel("ListItem.Plot")})
+    li.setArt({'thumb': xbmc.getInfoLabel("ListItem.Thumb")})
+
+    xbmcplugin.setResolvedUrl(__addon_handle__, True, li)
+
+    if "_ts_ir" in url:
+        url = url.split("|")[1]
+
+    xbmc.Player().play(item=url, listitem=li)
+    return
+
+# CREATE CHECKSUM
+def checksum(id, session):
+    
+    # GET PSK
+    url = "https://web.magentatv.de/meine-inhalte/cloud-aufnahmen"
+    req = requests.get(url, headers=header)
+    psk = b64decode(str(req.content).split('"id2":"')[1].split('"')[0]).decode()
+
+    # CREATE KEY
+    v = f"{psk}{session['userData']['userID']}{session['userData']['encryptToken']}{session['cnonce']}"
+    sha256 = hashlib.sha256()
+    sha256.update(v.encode())
+    sha256 = sha256.hexdigest()
+    key = sha256.upper()
+
+    # CREATE CHECKSUM
+    sig = hmac.new(bytes(key, 'latin-1'), msg=bytes(id, 'latin-1'), digestmod=hashlib.sha256).hexdigest()
+    
+    return sig
+
 
 #
 # TV MENU
@@ -97,17 +157,6 @@ def get_channel_list(session, enable_e, enable_s):
 def tv_menu_creator(ch_list, session):
     menu_listing = []
     epg_dict = dict()
-    local_timezone = tzlocal.get_localzone()
-
-    # EPG CONTENT
-    def get_image(list_item):
-        if list_item and len(list_item) > 0:
-            resolutions = ["1920", "1440", "1280", "960", "720", "480", "360", "180"]
-            for resolution in resolutions:
-                for image in list_item:
-                    if image.get("resolution", ["0", "0"])[0] == resolution:
-                        return image.get("href", None)
-        return None
 
     time_start = str(datetime.now().replace(tzinfo=local_timezone).astimezone(timezone.utc).strftime("%Y%m%d%H%M%S"))
     time_end = str(((datetime.now().replace(tzinfo=local_timezone).astimezone(timezone.utc)) + timedelta(minutes=1)).strftime("%Y%m%d%H%M%S"))
@@ -151,28 +200,60 @@ def tv_menu_creator(ch_list, session):
     xbmcplugin.addDirectoryItems(__addon_handle__, menu_listing, len(menu_listing))
     xbmcplugin.endOfDirectory(__addon_handle__)
 
-# PLAYBACK CHANNEL
-def get_channel(url, session):
+
+#
+# PVR MENU
+#
+
+def pvr_browser(id=None, media=None, pvr_id=None):
+
+    session = login("ngtvepg")
+
+    pvr_list = get_pvr_list(session)
+
+    if id is None or media is None or pvr_id is None:
+        pvr_menu_creator(pvr_list)
+    else:
+        get_pvr(id, media, pvr_id, session)
+
+# RETRIEVE THE PVR LIST
+def get_pvr_list(session):
+
+    url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/QueryPVR"
+    data = '{"count":-1,"DTQueryType":0,"expandSubTask":2,"isFilter":0,"offset":0,"orderType":1,"type":0}'
+    epg_cookies = session["cookies"]
+    header.update({"X_CSRFToken": session["cookies"]["CSRFSESSION"]})
+
+    req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
+    return req.json()["pvrlist"]
+
+# CREATE THE PVR MENU
+def pvr_menu_creator(pvr_list):
+    menu_listing = []
+
+    for i in pvr_list:
+        li = xbmcgui.ListItem(label=f'{datetime.strptime(i["beginTime"], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).astimezone(local_timezone).strftime("%d.%m.%Y %H:%M")} | {i["channelName"]} | {i["pvrName"]}')
+        li.setArt({"thumb": i["channelPictures"][0]["href"], "fanart": get_image(i.get("pictures"))})
+        info = "[B]" + i["subName"] + "[/B]\n\n" if i.get("subName") else ""
+        li.setInfo("video", {'plot': info + i.get("introduce", "Keine Sendungsinformationen verfügbar")})
+        url = build_url({"id": i["channelId"], "media": i["mediaId"], "pvr": i["pvrId"]})
+        menu_listing.append((url, li, False))
+
+    xbmcplugin.addDirectoryItems(__addon_handle__, menu_listing, len(menu_listing))
+    xbmcplugin.endOfDirectory(__addon_handle__)
+
+# PLAYBACK PVR
+def get_pvr(id, media, pvr_id, session):
     
-    license_url = "https://vmxdrmfklb1.sfm.t-online.de:8063/"
-    li = xbmcgui.ListItem(path=url)        
+    url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/AuthorizeAndPlay"
+    data = f'{{"checksum":"{checksum(id, session)}","contentId":"{id}","mediaId":"{media}","pvrId":"{pvr_id}","businessType":8,"contentType":"CHANNEL"}}'
+    epg_cookies = session["cookies"]
+    header.update({"X_CSRFToken": session["cookies"]["CSRFSESSION"]})
 
-    device_id = session["deviceId"]
-
-    li.setProperty('inputstream.adaptive.license_key', f"{license_url}|deviceId={device_id}|R" + "{SSM}|")
-    li.setProperty('inputstream.adaptive.license_type', "com.widevine.alpha")
-
-    li.setProperty('inputstream', 'inputstream.adaptive')
-    li.setProperty('inputstream.adaptive.manifest_type', 'mpd')
-    li.setProperty("IsPlayable", "true")
-
-    li.setInfo("video", {"title": xbmc.getInfoLabel("ListItem.Label"), "plot": xbmc.getInfoLabel("ListItem.Plot")})
-    li.setArt({'thumb': xbmc.getInfoLabel("ListItem.Thumb")})
-
-    xbmcplugin.setResolvedUrl(__addon_handle__, True, li)
-
-    xbmc.Player().play(item=url, listitem=li)
-    return
+    req = requests.post(url, headers=header, data=data, cookies=epg_cookies)
+    playback_url = req.json()["playUrl"]
+    
+    get_channel(playback_url, session)
 
 
 #
@@ -230,6 +311,18 @@ def menu_creator(item, session):
                         li.setArt({"thumb": b["assetDetails"]["contentInformation"]["images"][0]["href"], "fanart": b["assetDetails"]["contentInformation"]["images"][0]["href"]})
                     url = build_url({"url": b["assetDetails"]["contentInformation"]["detailPage"]["href"]})
                     menu_listing.append((url, li, True))
+
+    # MyMovies
+    if item["$type"] == "mymovies":
+        for i in item["content"]["items"]:
+            li = xbmcgui.ListItem(label=i["contentInformation"]['title'])
+            li.setInfo("video", {'plot': i["contentInformation"].get("longDescription", i["contentInformation"].get("description"))})
+            if len(i["contentInformation"]["images"]) > 1:
+                li.setArt({"thumb": i["contentInformation"]["images"][0]["href"], "fanart": i["contentInformation"]["images"][-1]["href"]})
+            else:
+                li.setArt({"thumb": i["contentInformation"]["images"][0]["href"], "fanart": i["contentInformation"]["images"][0]["href"]})
+            url = build_url({"url": i["contentInformation"]["detailPage"]["href"], "auth": True})
+            menu_listing.append((url, li, True))
     
     # Structured Grid
     if item["$type"] == "structuredgrid":
@@ -298,17 +391,15 @@ def menu_creator(item, session):
 
             # MAIN
             for i in item["content"]["partnerInformation"]:
-                # if i["name"] == "MEGATHEK":
-                    for a in i["features"]:
-                        li = xbmcgui.ListItem(label=f'{a["featureType"]} ({i["name"]})')
-                        li.setInfo("video", {'plot': item["content"]["contentInformation"].get("longDescription", item["content"]["contentInformation"].get("description"))})
-                        if len(item["content"]["contentInformation"]["images"]) > 1:
-                            li.setArt({"thumb": item["content"]["contentInformation"]["images"][0]["href"], "fanart": item["content"]["contentInformation"]["images"][-1]["href"]})
-                        else:
-                            li.setArt({"thumb": item["content"]["contentInformation"]["images"][0]["href"], "fanart": item["content"]["contentInformation"]["images"][0]["href"]})
-                        url = build_url({"url": a["player"]["href"], "auth": True})
-                        if i["buyPrice"] == 0:
-                            menu_listing.append((url, li, False))
+                for a in i["features"]:
+                    li = xbmcgui.ListItem(label=f'{a["featureType"]} ({i["name"]})')
+                    li.setInfo("video", {'plot': item["content"]["contentInformation"].get("longDescription", item["content"]["contentInformation"].get("description"))})
+                    if len(item["content"]["contentInformation"]["images"]) > 1:
+                        li.setArt({"thumb": item["content"]["contentInformation"]["images"][0]["href"], "fanart": item["content"]["contentInformation"]["images"][-1]["href"]})
+                    else:
+                        li.setArt({"thumb": item["content"]["contentInformation"]["images"][0]["href"], "fanart": item["content"]["contentInformation"]["images"][0]["href"]})
+                    url = build_url({"url": a["player"]["href"], "auth": True})
+                    menu_listing.append((url, li, False))
 
             # TRAILER
             for i in item["content"]["contentInformation"]["trailers"]:
@@ -404,6 +495,10 @@ def router(item):
         elif params.get("feature", "") == "TV":
             tv_browser()
 
+        # PVR
+        elif params.get("feature", "") == "PVR":
+            pvr_browser()
+
         # MY CONTENTS
         elif params.get("feature", "") == "ML":
             url = my_url
@@ -429,9 +524,13 @@ def router(item):
         elif params.get("tv_url"):
             tv_browser(params["tv_url"])
 
+        # PVR STREAM
+        elif params.get("id") and params.get("media") and params.get("pvr"):
+            pvr_browser(params["id"], params["media"], params["pvr"])
+
     else:
         # MAIN MENU
-        for i in [("Video on Demand", "VOD"), ("Live TV", "TV"), ("Meine Inhalte", "ML"), ("Meine Merkliste", "WL")]:
+        for i in [("Video on Demand", "VOD"), ("Live TV", "TV"), ("Meine Aufnahmen", "PVR"), ("Meine Inhalte", "ML"), ("Meine Merkliste", "WL")]:
             li = xbmcgui.ListItem(label=i[0])
             url = build_url({"feature": i[1]})
             menu_listing.append((url, li, True))
@@ -560,6 +659,8 @@ def login_process(__username, __password):
     session.update({"deviceId": req.json()["caDeviceInfo"][0]["VUID"]})  # DEVICE/TERMINAL ID
     session.update(bearer)  # TOKENS (SCOPE: NGTVEPG)
     session.update({"cookies": req.cookies.get_dict()})  # EPG COOKIES
+    session.update({"userData": user_data})  # AUTH DATA
+    session.update({"cnonce": cnonce})  # CNONCE
     
     # RETURN USER-SPECIFIC COOKIE VALUES
     return session
