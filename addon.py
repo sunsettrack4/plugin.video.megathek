@@ -231,7 +231,7 @@ def pvr_menu_creator(pvr_list):
     menu_listing = []
 
     def append_item(i):
-        li = xbmcgui.ListItem(label=f'{datetime.datetime(*(time.strptime(i["beginTime"], "%Y%m%d%H%M%S"))).replace(tzinfo=datetime.timezone.utc).astimezone(local_timezone).strftime("%d.%m.%Y %H:%M")} | {i["channelName"]} | {i["pvrName"]}')
+        li = xbmcgui.ListItem(label=f'{datetime.datetime(*(time.strptime(i["beginTime"], "%Y%m%d%H%M%S")[0:6])).replace(tzinfo=datetime.timezone.utc).astimezone(local_timezone).strftime("%d.%m.%Y %H:%M")} | {i["channelName"]} | {i["pvrName"]}')
         li.setArt({"thumb": i["channelPictures"][0]["href"], "fanart": get_image(i.get("pictures"))})
         info = "[B]" + i["subName"] + "[/B]\n\n" if i.get("subName") else ""
         li.setInfo("video", {'plot': info + i.get("introduce", "Keine Sendungsinformationen verfügbar")})
