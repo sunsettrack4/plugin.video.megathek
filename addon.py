@@ -1,7 +1,7 @@
 from base64 import b64encode, b64decode
 from bs4 import BeautifulSoup
 from uuid import uuid4
-import datetime, hashlib, hmac, platform, requests, sys, tzlocal, urllib, xmltodict
+import datetime, hashlib, hmac, platform, requests, sys, time, tzlocal, urllib, xmltodict
 import xbmc, xbmcaddon, xbmcgui, xbmcplugin, xbmcvfs
 
 
@@ -191,7 +191,7 @@ def tv_menu_creator(ch_list, session):
         if ch.get("playurl") or ch.get("playurl_4k"):
             li.setArt({"thumb": ch["img"]})
             if epg_dict.get(channel_id):
-                info = '[B]' + epg_dict[channel_id][0]['t'] + '[/B] (' + datetime.datetime.strptime(epg_dict[channel_id][0]['s'].split(' UTC')[0], '%Y-%m-%d %H:%M:%S').replace(tzinfo=datetime.timezone.utc).astimezone(local_timezone).strftime('%H:%M') + ' - ' + datetime.datetime.strptime(epg_dict[channel_id][0]['e'].split(' UTC')[0], '%Y-%m-%d %H:%M:%S').replace(tzinfo=datetime.timezone.utc).astimezone(local_timezone).strftime('%H:%M') + ' Uhr)\n\n' + epg_dict[channel_id][0]['d']
+                info = '[B]' + epg_dict[channel_id][0]['t'] + '[/B] (' + datetime.datetime(*(time.strptime(epg_dict[channel_id][0]['s'].split(' UTC')[0], '%Y-%m-%d %H:%M:%S')[0:6])).replace(tzinfo=datetime.timezone.utc).astimezone(local_timezone).strftime('%H:%M') + ' - ' + datetime.datetime(*(time.strptime(epg_dict[channel_id][0]['e'].split(' UTC')[0], '%Y-%m-%d %H:%M:%S')[0:6])).replace(tzinfo=datetime.timezone.utc).astimezone(local_timezone).strftime('%H:%M') + ' Uhr)\n\n' + epg_dict[channel_id][0]['d']
                 li.setArt({"thumb": ch["img"], "fanart": epg_dict[channel_id][0]['i'] if epg_dict[channel_id][0]['i'] is not None else ch["img"]})
                 li.setInfo("video", {'plot': info})
             menu_listing.append((url, li, False))
@@ -231,7 +231,7 @@ def pvr_menu_creator(pvr_list):
     menu_listing = []
 
     def append_item(i):
-        li = xbmcgui.ListItem(label=f'{datetime.datetime.strptime(i["beginTime"], "%Y%m%d%H%M%S").replace(tzinfo=datetime.timezone.utc).astimezone(local_timezone).strftime("%d.%m.%Y %H:%M")} | {i["channelName"]} | {i["pvrName"]}')
+        li = xbmcgui.ListItem(label=f'{datetime.datetime(*(time.strptime(i["beginTime"], "%Y%m%d%H%M%S"))).replace(tzinfo=datetime.timezone.utc).astimezone(local_timezone).strftime("%d.%m.%Y %H:%M")} | {i["channelName"]} | {i["pvrName"]}')
         li.setArt({"thumb": i["channelPictures"][0]["href"], "fanart": get_image(i.get("pictures"))})
         info = "[B]" + i["subName"] + "[/B]\n\n" if i.get("subName") else ""
         li.setInfo("video", {'plot': info + i.get("introduce", "Keine Sendungsinformationen verfügbar")})
