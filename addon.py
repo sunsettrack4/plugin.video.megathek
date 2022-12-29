@@ -1,8 +1,7 @@
 from base64 import b64encode, b64decode
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta, timezone
 from uuid import uuid4
-import hashlib, hmac, platform, requests, sys, tzlocal, urllib, xmltodict
+import datetime, hashlib, hmac, platform, requests, sys, tzlocal, urllib, xmltodict
 import xbmc, xbmcaddon, xbmcgui, xbmcplugin, xbmcvfs
 
 
@@ -158,8 +157,8 @@ def tv_menu_creator(ch_list, session):
     menu_listing = []
     epg_dict = dict()
 
-    time_start = str(datetime.now().replace(tzinfo=local_timezone).astimezone(timezone.utc).strftime("%Y%m%d%H%M%S"))
-    time_end = str(((datetime.now().replace(tzinfo=local_timezone).astimezone(timezone.utc)) + timedelta(minutes=1)).strftime("%Y%m%d%H%M%S"))
+    time_start = str(datetime.datetime.now().replace(tzinfo=local_timezone).astimezone(datetime.timezone.utc).strftime("%Y%m%d%H%M%S"))
+    time_end = str(((datetime.datetime.now().replace(tzinfo=local_timezone).astimezone(datetime.timezone.utc)) + datetime.timedelta(minutes=1)).strftime("%Y%m%d%H%M%S"))
 
     url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/PlayBillList"
     guide_data = f'{{"type":2,"isFiltrate":0,"orderType":4,"isFillProgram":1,"channelNamespace":"2","offset":0,' \
@@ -192,7 +191,7 @@ def tv_menu_creator(ch_list, session):
         if ch.get("playurl") or ch.get("playurl_4k"):
             li.setArt({"thumb": ch["img"]})
             if epg_dict.get(channel_id):
-                info = '[B]' + epg_dict[channel_id][0]['t'] + '[/B] (' + datetime.strptime(epg_dict[channel_id][0]['s'].split(' UTC')[0], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc).astimezone(local_timezone).strftime('%H:%M') + ' - ' + datetime.strptime(epg_dict[channel_id][0]['e'].split(' UTC')[0], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc).astimezone(local_timezone).strftime('%H:%M') + ' Uhr)\n\n' + epg_dict[channel_id][0]['d']
+                info = '[B]' + epg_dict[channel_id][0]['t'] + '[/B] (' + datetime.datetime.strptime(epg_dict[channel_id][0]['s'].split(' UTC')[0], '%Y-%m-%d %H:%M:%S').replace(tzinfo=datetime.timezone.utc).astimezone(local_timezone).strftime('%H:%M') + ' - ' + datetime.datetime.strptime(epg_dict[channel_id][0]['e'].split(' UTC')[0], '%Y-%m-%d %H:%M:%S').replace(tzinfo=datetime.timezone.utc).astimezone(local_timezone).strftime('%H:%M') + ' Uhr)\n\n' + epg_dict[channel_id][0]['d']
                 li.setArt({"thumb": ch["img"], "fanart": epg_dict[channel_id][0]['i'] if epg_dict[channel_id][0]['i'] is not None else ch["img"]})
                 li.setInfo("video", {'plot': info})
             menu_listing.append((url, li, False))
@@ -231,13 +230,22 @@ def get_pvr_list(session):
 def pvr_menu_creator(pvr_list):
     menu_listing = []
 
-    for i in pvr_list:
-        li = xbmcgui.ListItem(label=f'{datetime.strptime(i["beginTime"], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).astimezone(local_timezone).strftime("%d.%m.%Y %H:%M")} | {i["channelName"]} | {i["pvrName"]}')
+    def append_item(i):
+        li = xbmcgui.ListItem(label=f'{datetime.datetime.strptime(i["beginTime"], "%Y%m%d%H%M%S").replace(tzinfo=datetime.timezone.utc).astimezone(local_timezone).strftime("%d.%m.%Y %H:%M")} | {i["channelName"]} | {i["pvrName"]}')
         li.setArt({"thumb": i["channelPictures"][0]["href"], "fanart": get_image(i.get("pictures"))})
         info = "[B]" + i["subName"] + "[/B]\n\n" if i.get("subName") else ""
         li.setInfo("video", {'plot': info + i.get("introduce", "Keine Sendungsinformationen verfügbar")})
         url = build_url({"id": i["channelId"], "media": i["mediaId"], "pvr": i["pvrId"]})
         menu_listing.append((url, li, False))
+
+    for i in pvr_list:
+        if i.get("pvrList"):
+            for a in i["pvrList"]:
+                append_item(a)
+        elif i.get("seriesType"):
+            continue
+        else:
+            append_item(i)
 
     xbmcplugin.addDirectoryItems(__addon_handle__, menu_listing, len(menu_listing))
     xbmcplugin.endOfDirectory(__addon_handle__)
@@ -422,10 +430,19 @@ def menu_creator(item, session):
             if q.get("UHD"):
                 url = q["UHD"]["url"]
                 c_no = q["UHD"]["c_no"]
+            elif q.get("HD"):
+                url = q["HD"]["url"]
+                c_no = q["HD"]["c_no"]
+            elif q.get("SD"):
+                url = q["SD"]["url"]
+                c_no = q["SD"]["c_no"]
             else:
-                url = q.get("HD", q["SD"])["url"]
-                c_no = q.get("HD", q["SD"])["c_no"]
+                xbmcgui.Dialog().notification(__addonname__, "Der Inhalt kann nicht wiedergegeben werden. [0]", xbmcgui.NOTIFICATION_INFO)
+                return
         else:
+            if not q.get("SD", False):
+                xbmcgui.Dialog().notification(__addonname__, "Der Inhalt kann nicht wiedergegeben werden. [1]", xbmcgui.NOTIFICATION_INFO)
+                return
             url = q["SD"]["url"]
             c_no = q["SD"]["c_no"]
         
@@ -464,6 +481,10 @@ def menu_creator(item, session):
         xbmcplugin.setResolvedUrl(__addon_handle__, True, li)
 
         xbmc.Player().play(item=stream_url, listitem=li)
+        return
+
+    if len(menu_listing) == 0:
+        xbmcgui.Dialog().notification(__addonname__, "Keine Inhalte gefunden", xbmcgui.NOTIFICATION_INFO)
         return
 
     xbmcplugin.addDirectoryItems(__addon_handle__, menu_listing, len(menu_listing))
@@ -569,7 +590,7 @@ def login_process(__username, __password):
     session = dict()
     uu_id = str(uuid4())
     cnonce = hashlib.md5()
-    cnonce.update(f'{str(datetime.now().timestamp()).replace(".", "")[0:-3]}:00'.encode())
+    cnonce.update(f'{str(datetime.datetime.now().timestamp()).replace(".", "")[0:-3]}:00'.encode())
     cnonce = cnonce.hexdigest()
     
 
