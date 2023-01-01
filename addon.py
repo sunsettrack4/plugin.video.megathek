@@ -52,6 +52,8 @@ def get_channel(url, session, enable_ts=False):
     li.setInfo("video", {"title": xbmc.getInfoLabel("ListItem.Label"), "plot": xbmc.getInfoLabel("ListItem.Plot")})
     li.setArt({'thumb': xbmc.getInfoLabel("ListItem.Thumb")})
 
+    xbmc.executebuiltin( "Dialog.Close(busydialognocancel)" )
+
     xbmcplugin.setResolvedUrl(__addon_handle__, True, li)
 
     if "_ts_ir" in url:
@@ -281,6 +283,8 @@ def build_url(query):
 
 # Load menu item(s)
 def menu_loader(item, auth):
+    if "http" not in item:
+        return
     if auth is True:
         session = login("ngtvvod")
         auth_header = {"authorization": f'TAuth realm="ngtvvod",tauth_token="{session["access_token"]}"'}
@@ -350,11 +354,13 @@ def menu_creator(item, session):
     # Unstructured Grid
     if item["$type"] in ("unstructuredgrid", "unstructuredgridlane"):
         for i in item["content"]["items"]:
+            url = None
             if i["type"] in ("Asset", "Teaser"):
                 if i.get("details"):
                     url = build_url({"url": i["details"]["href"]})
                 elif i.get("buttons"):
-                    url = build_url({"url": i["buttons"][0]["details"]["href"]})
+                    if i["buttons"][0].get("details"):
+                        url = build_url({"url": i["buttons"][0]["details"]["href"]})
                 if i["type"] == "Teaser":
                     if i.get("stageTitle"):
                         li = xbmcgui.ListItem(label=i['stageTitle'])
@@ -368,30 +374,33 @@ def menu_creator(item, session):
                 if i["type"] in ("Asset", "Teaser"):
                     li.setInfo("video", {'plot': i.get("longDescription", i.get("description"))})
                     li.setArt({"thumb": i.get("image", i.get("stageImage", {"href": ""}))["href"], "fanart": i.get("image", i.get("stageImage", {"href": ""}))["href"]})
-                menu_listing.append((url, li, True))
+                if url:
+                    menu_listing.append((url, li, True))
 
     # Asset Details
     if item["$type"] == "assetdetails":
 
         # SEASON
         if item["content"]["type"] in ("Season", "Series"):
-            for i in item["content"]["partnerInformation"]:
-                # if i["name"] == "MEGATHEK":
-                    for a in item["content"]["multiAssetInformation"]["subAssetDetails"]:
-                        if item["content"]["type"] == "Series":
-                            li = xbmcgui.ListItem(label=f'{item["content"]["contentInformation"]["title"]} - {a["contentInformation"]["title"]} ({i["name"]})')
-                        if item["content"]["type"] == "Season":
-                            li = xbmcgui.ListItem(label=f'{item["content"]["multiAssetInformation"]["seriesTitle"]} - {a["contentInformation"]["title"]} ({i["name"]})')
-                        li.setInfo("video", {'plot': a["contentInformation"].get("description")})
-                        if len(a["contentInformation"]["images"]) > 1:
-                            li.setArt({"thumb": a["contentInformation"]["images"][0]["href"], "fanart": a["contentInformation"]["images"][-1]["href"]})
-                        else:
-                            li.setArt({"thumb": a["contentInformation"]["images"][0]["href"], "fanart": a["contentInformation"]["images"][0]["href"]})
-                        if item["content"]["type"] == "Series":
-                            url = build_url({"url": a["contentInformation"]["detailPage"]["href"]})
-                            menu_listing.append((url, li, True))
-                        if len(a["partnerInformation"]) > 0 and a["partnerInformation"][0].get("features", False) and len(a["partnerInformation"][0]["features"]) > 0 and item["content"]["type"] == "Season":
-                            url = build_url({"url": a["partnerInformation"][0]["features"][0]["player"]["href"], "auth": True})
+            for a in item["content"]["multiAssetInformation"]["subAssetDetails"]:
+                info = a["contentInformation"].get("description")
+                if len(a["contentInformation"]["images"]) > 1:
+                    pics = [a["contentInformation"]["images"][0]["href"], a["contentInformation"]["images"][-1]["href"]]
+                else:
+                    pics = [a["contentInformation"]["images"][0]["href"], a["contentInformation"]["images"][0]["href"]]
+                if item["content"]["type"] == "Series":
+                    li = xbmcgui.ListItem(label=f'{item["content"]["contentInformation"]["title"]} - {a["contentInformation"]["title"]}')
+                    li.setInfo("video", {'plot': info})
+                    li.setArt({"thumb": pics[0], "fanart": pics[1]})
+                    url = build_url({"url": a["contentInformation"]["detailPage"]["href"]})
+                    menu_listing.append((url, li, True))
+                if item["content"]["type"] == "Season":
+                    for i in a["partnerInformation"]:
+                        if i.get("features", False) and len(i["features"]) > 0:
+                            li = xbmcgui.ListItem(label=f'{item["content"]["multiAssetInformation"]["seriesTitle"]} - {a["contentInformation"]["title"]} ({i["partnerId"].upper()})')
+                            li.setInfo("video", {'plot': info})
+                            li.setArt({"thumb": pics[0], "fanart": pics[1]})
+                            url = build_url({"url": i["features"][0]["player"]["href"], "auth": True})
                             menu_listing.append((url, li, False))
 
         # MOVIE / EPISODE
@@ -500,7 +509,7 @@ def router(item):
 
     def vod_browser():
         m = menu_loader(url, auth)
-        menu_creator(m[0], m[1])
+        menu_creator(m[0], m[1]) if m is not None else []
 
     params = dict(urllib.parse.parse_qsl(item[1:]))
     menu_listing = []
@@ -539,15 +548,31 @@ def router(item):
                 auth = True if params["auth"] == "True" else False
             else:
                 auth = False
-            vod_browser()
+            if auth:
+                xbmc.executebuiltin( "ActivateWindow(busydialognocancel)" )
+                try:
+                    vod_browser()
+                except:
+                    pass
+                xbmc.executebuiltin( "Dialog.Close(busydialognocancel)" )
+            else:
+                vod_browser()
 
         # LIVE TV STREAM
         elif params.get("tv_url"):
-            tv_browser(params["tv_url"])
+            xbmc.executebuiltin( "ActivateWindow(busydialognocancel)" )
+            try:
+                tv_browser(params["tv_url"])
+            except:
+                xbmc.executebuiltin( "Dialog.Close(busydialognocancel)" )
 
         # PVR STREAM
         elif params.get("id") and params.get("media") and params.get("pvr"):
-            pvr_browser(params["id"], params["media"], params["pvr"])
+            xbmc.executebuiltin( "ActivateWindow(busydialognocancel)" )
+            try:
+                pvr_browser(params["id"], params["media"], params["pvr"])
+            except:
+                xbmc.executebuiltin( "Dialog.Close(busydialognocancel)" )
 
     else:
         # MAIN MENU
