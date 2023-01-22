@@ -1,5 +1,6 @@
 from base64 import b64encode, b64decode
 from bs4 import BeautifulSoup
+from threading import Thread
 from uuid import uuid4
 import datetime, hashlib, hmac, platform, requests, sys, time, tzlocal, urllib, xmltodict
 import xbmc, xbmcaddon, xbmcgui, xbmcplugin, xbmcvfs
@@ -432,6 +433,8 @@ def menu_creator(item, session):
     # Player
     if item["$type"] == "player":
         q = dict()
+        pid = item["content"]["feature"]["metadata"].get("cmlsId", "")
+        stream_id = item["content"]["feature"]["metadata"].get("id", "")
         for i in item["content"]["feature"]["representations"]:
             if i["type"] in ("MpegDash", "MpegDashTranscoded") and len(i["contentPackages"]) > 0:
                 q[i["quality"]] = {"url": i["contentPackages"][0]["media"]["href"], "c_no": i["contentPackages"][0]["contentNumber"]}
@@ -457,8 +460,14 @@ def menu_creator(item, session):
         
         if session is not None:
             auth_header = {"authorization": f'TAuth realm="ngtvvod",tauth_token="{session["access_token"]}"', "x-device-authorization": f'TAuth realm="device",device_token="{session["deviceToken"]}"'}
+            try:
+                position = requests.get("https://wcps.t-online.de/vphs/v1/default/PlaybackHistory/ids", headers=auth_header)
+                position = [i["position"] for i in position.json()["items"] if i["assetId"] == pid][0]
+            except:
+                position = 0
         else:
             auth_header = header
+            position = 0
         
         media = requests.get(url, headers=auth_header)
         stream_url = xmltodict.parse(media.content)["smil"]["body"]["seq"]["media"]["@src"]
@@ -489,7 +498,17 @@ def menu_creator(item, session):
 
         xbmcplugin.setResolvedUrl(__addon_handle__, True, li)
 
-        xbmc.Player().play(item=stream_url, listitem=li)
+        t = xbmc.Player()
+        t.play(item=stream_url, listitem=li)
+        
+        if position > 0:
+            pos = xbmcgui.Dialog().yesno("Weiterschauen", "Möchten Sie die Wiedergabe an der zuletzt gespeicherten Position fortsetzen?")
+            if pos:
+                t.seekTime(position)
+        
+        x = Thread(target=watch, args=(t, auth_header, stream_id))
+        x.start()
+        
         return
 
     if len(menu_listing) == 0:
@@ -499,6 +518,28 @@ def menu_creator(item, session):
     xbmcplugin.addDirectoryItems(__addon_handle__, menu_listing, len(menu_listing))
     xbmcplugin.endOfDirectory(__addon_handle__)
 
+
+#
+# VIDEO PLAYER THREAD
+#
+
+def watch(t, auth, stream_id):
+    id_time = 0
+    
+    while not t.isPlaying():  # not started yet
+        time.sleep(1)
+    while t.isPlaying():  # track progress
+        try:
+            if t.getTime() > 0:
+                id_time = int(t.getTime())
+        except:
+            pass
+    
+    data = {"audioLanguage": "de", "position": id_time, "subtitleLanguage": "off"}
+    auth.update({'Content-Type': 'application/x-www-form-urlencoded'})
+    
+    requests.post(f"https://wcps.t-online.de/vphs/v1/default/PlaybackHistory/{stream_id}/Main%20Movie", headers=auth, data=data)
+        
 
 #
 # ROUTER
