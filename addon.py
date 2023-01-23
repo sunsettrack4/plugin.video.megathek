@@ -37,7 +37,7 @@ def get_image(list_item):
 
 # PLAYBACK CHANNEL
 def get_channel(url, session, enable_ts=False):
-    
+
     license_url = "https://vmxdrmfklb1.sfm.t-online.de:8063/"
     li = xbmcgui.ListItem(path=url)        
 
@@ -60,7 +60,16 @@ def get_channel(url, session, enable_ts=False):
     if "_ts_ir" in url:
         url = url.split("|")[1]
 
-    xbmc.Player().play(item=url, listitem=li)
+    t = xbmc.Player()
+    t.play(item=url, listitem=li)
+    
+    time.sleep(30)
+
+    if t.isPlaying() and not t.isExternalPlayer():
+        window_id = xbmcgui.getCurrentWindowId()
+        x = Thread(target=refresh_window, args=(datetime.datetime.now().timestamp(), window_id, ))
+        x.start()
+    
     return
 
 # CREATE CHECKSUM
@@ -504,7 +513,10 @@ def menu_creator(item, session):
         if position > 0:
             pos = xbmcgui.Dialog().yesno("Weiterschauen", "Möchten Sie die Wiedergabe an der zuletzt gespeicherten Position fortsetzen?")
             if pos:
-                t.seekTime(position)
+                if position > t.getTime():
+                    t.seekTime(position - int(t.getTime()))
+                else:
+                    t.seekTime(int(t.getTime()) - position)
         
         x = Thread(target=watch, args=(t, auth_header, stream_id))
         x.start()
@@ -517,6 +529,18 @@ def menu_creator(item, session):
 
     xbmcplugin.addDirectoryItems(__addon_handle__, menu_listing, len(menu_listing))
     xbmcplugin.endOfDirectory(__addon_handle__)
+
+
+#
+# REFRESH THREAD
+#
+
+def refresh_window(init_time, window_id):
+    while True:
+        if xbmcgui.getCurrentWindowId() != window_id and init_time + 30 < datetime.datetime.now().timestamp():
+            xbmc.executebuiltin("Container.Refresh")
+            break
+        time.sleep(1)
 
 
 #
