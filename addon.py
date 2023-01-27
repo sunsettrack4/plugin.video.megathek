@@ -757,7 +757,7 @@ def login_process(__username, __password):
         device_data = req.json()
 
         for i in device_data["deviceList"]:
-            if i["deviceName"] == "WebTV":
+            if i.get("deviceName", "") == "WebTV":
                 uu_id = i["physicalDeviceId"]
                 break
         
