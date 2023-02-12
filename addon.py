@@ -2,7 +2,7 @@ from base64 import b64encode, b64decode
 from bs4 import BeautifulSoup
 from threading import Thread
 from uuid import uuid4
-import datetime, hashlib, hmac, platform, requests, sys, time, tzlocal, urllib, xmltodict
+import datetime, hashlib, hmac, json, platform, requests, sys, time, tzlocal, urllib, xmltodict
 import xbmc, xbmcaddon, xbmcgui, xbmcplugin, xbmcvfs
 
 
@@ -24,6 +24,20 @@ local_timezone = tzlocal.get_localzone()
 header = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
     "Content-Type": "application/x-www-form-urlencoded"}
+
+# CONTEXT ITEMS
+def context(video_id):
+    contextMenuItems = []
+    contextMenuItems.append((f'Gesehen/Ungesehen', f'RunScript("special://home/addons/plugin.video.megathek/resources/lib/add_watched_status.py",{video_id},{data_dir})'))
+    return contextMenuItems
+
+# GET/SAVE WATCHED INFO
+def retrieve_watched_status():
+    try:
+        with open(f"{data_dir}/watched_list.json", "r", encoding="UTF-8") as file:
+            return json.loads(file.read())
+    except:
+        return []
 
 # EPG CONTENT
 def get_image(list_item):
@@ -326,7 +340,8 @@ def menu_creator(item, session):
             if b.get("assetDetails"):
                 if b["assetDetails"]["type"] in ("Movie", "Series", "Season", "Episode"):
                     li = xbmcgui.ListItem(label=f'{b["assetDetails"]["multiAssetInformation"]["seriesTitle"] + " - " if b["assetDetails"]["type"] in ("Episode", "Season") else ""}{b["assetDetails"]["multiAssetInformation"]["seasonTitle"] + " - " if b["assetDetails"]["type"] == "Episode" else ""}{b["assetDetails"]["contentInformation"]["title"]}')
-                    li.setInfo("video", {'plot': b["assetDetails"]["contentInformation"].get("longDescription", b["assetDetails"]["contentInformation"].get("description"))})
+                    li.addContextMenuItems(context(b["assetDetails"]["contentInformation"].get("id", "")))
+                    li.setInfo("video", {'playcount': 1 if b["assetDetails"]["contentInformation"].get("id") in retrieve_watched_status() else 0, 'plot': b["assetDetails"]["contentInformation"].get("longDescription", b["assetDetails"]["contentInformation"].get("description"))})
                     if len(b["assetDetails"]["contentInformation"]["images"]) > 1:
                         li.setArt({"thumb": b["assetDetails"]["contentInformation"]["images"][0]["href"], "fanart": b["assetDetails"]["contentInformation"]["images"][-1]["href"]})
                     else:
@@ -338,7 +353,8 @@ def menu_creator(item, session):
     if item["$type"] == "mymovies":
         for i in item["content"]["items"]:
             li = xbmcgui.ListItem(label=i["contentInformation"]['title'])
-            li.setInfo("video", {'plot': i["contentInformation"].get("longDescription", i["contentInformation"].get("description"))})
+            li.addContextMenuItems(context(i["contentInformation"].get("id", "")))
+            li.setInfo("video", {'playcount': 1 if i["contentInformation"].get("id") in retrieve_watched_status() else 0, 'plot': i["contentInformation"].get("longDescription", i["contentInformation"].get("description"))})
             if len(i["contentInformation"]["images"]) > 1:
                 li.setArt({"thumb": i["contentInformation"]["images"][0]["href"], "fanart": i["contentInformation"]["images"][-1]["href"]})
             else:
@@ -353,7 +369,7 @@ def menu_creator(item, session):
                 li = xbmcgui.ListItem(label=i['title'])
                 if len(i.get("technicalTiles", [])) > 0 and not i["type"] in ("MyMovies", "Watchlist"):
                     if i["technicalTiles"][0]["teaser"]["title"] == "Alle anzeigen" and i["title"] != "MEGATHEK: GENRES":
-                        li.setInfo("video", {'plot': i["technicalTiles"][0]["teaser"].get("description")})
+                        li.setInfo("video", {'playcount': 1 if str(i["technicalTiles"][0]["teaser"].get("id", "")) in retrieve_watched_status() else 0, 'plot': i["technicalTiles"][0]["teaser"].get("description")})
                         url = build_url({"url": i["technicalTiles"][0]["teaser"]["details"]["href"]})
                     else:
                         url = build_url({"url": i["laneContentLink"]["href"]})
@@ -382,7 +398,8 @@ def menu_creator(item, session):
                     else:
                         li = xbmcgui.ListItem(label=i['title'])
                 if i["type"] in ("Asset", "Teaser"):
-                    li.setInfo("video", {'plot': i.get("longDescription", i.get("description"))})
+                    li.addContextMenuItems(context(i.get("id", "")))
+                    li.setInfo("video", {'playcount': 1 if str(i.get("id", "")) in retrieve_watched_status() else 0, 'plot': i.get("longDescription", i.get("description"))})
                     li.setArt({"thumb": i.get("image", i.get("stageImage", {"href": ""}))["href"], "fanart": i.get("image", i.get("stageImage", {"href": ""}))["href"]})
                 if url:
                     menu_listing.append((url, li, True))
@@ -400,7 +417,8 @@ def menu_creator(item, session):
                     pics = [a["contentInformation"]["images"][0]["href"], a["contentInformation"]["images"][0]["href"]]
                 if item["content"]["type"] == "Series":
                     li = xbmcgui.ListItem(label=f'{item["content"]["contentInformation"]["title"]} - {a["contentInformation"]["title"]}')
-                    li.setInfo("video", {'plot': info})
+                    li.addContextMenuItems(context(f'{item["content"]["contentInformation"].get("id", "")}_{a["contentInformation"]["title"]}'))
+                    li.setInfo("video", {'playcount': 1 if f'{item["content"]["contentInformation"].get("id", "")}_{a["contentInformation"]["title"]}' in retrieve_watched_status() else 0, 'plot': info})
                     li.setArt({"thumb": pics[0], "fanart": pics[1]})
                     url = build_url({"url": a["contentInformation"]["detailPage"]["href"]})
                     menu_listing.append((url, li, True))
@@ -408,7 +426,8 @@ def menu_creator(item, session):
                     for i in a["partnerInformation"]:
                         if i.get("features", False) and len(i["features"]) > 0:
                             li = xbmcgui.ListItem(label=f'{item["content"]["multiAssetInformation"]["seriesTitle"]} - {a["contentInformation"]["title"]} ({i["partnerId"].upper()})')
-                            li.setInfo("video", {'plot': info})
+                            li.addContextMenuItems(context(f'{item["content"]["contentInformation"].get("id", "")}_{a["contentInformation"]["title"]}'))
+                            li.setInfo("video", {'playcount': 1 if f'{item["content"]["contentInformation"].get("id", "")}_{a["contentInformation"]["title"]}' in retrieve_watched_status() else 0, 'plot': info})
                             li.setArt({"thumb": pics[0], "fanart": pics[1]})
                             url = build_url({"url": i["features"][0]["player"]["href"], "auth": True})
                             menu_listing.append((url, li, False))
@@ -420,7 +439,8 @@ def menu_creator(item, session):
             for i in item["content"]["partnerInformation"]:
                 for a in i["features"]:
                     li = xbmcgui.ListItem(label=f'{a["featureType"]} ({i["name"]})')
-                    li.setInfo("video", {'plot': item["content"]["contentInformation"].get("longDescription", item["content"]["contentInformation"].get("description"))})
+                    li.addContextMenuItems(context(f'{item["content"]["contentInformation"].get("id", "")}'))
+                    li.setInfo("video", {'mediatype': 'video', 'playcount': 1 if f'{item["content"]["contentInformation"].get("id")}' in retrieve_watched_status() else 0, 'plot': item["content"]["contentInformation"].get("longDescription", item["content"]["contentInformation"].get("description"))})
                     if len(item["content"]["contentInformation"]["images"]) > 1:
                         li.setArt({"thumb": item["content"]["contentInformation"]["images"][0]["href"], "fanart": item["content"]["contentInformation"]["images"][-1]["href"]})
                     else:
@@ -431,7 +451,8 @@ def menu_creator(item, session):
             # TRAILER
             for i in item["content"]["contentInformation"]["trailers"]:
                 li = xbmcgui.ListItem(label="Trailer")
-                li.setInfo("video", {'plot': item["content"]["contentInformation"].get("longDescription", item["content"]["contentInformation"].get("description"))})
+                li.addContextMenuItems(context(f'{item["content"]["contentInformation"].get("id", "")}_TRAILER'))
+                li.setInfo("video", {'playcount': 1 if f'{item["content"]["contentInformation"].get("id", "")}_TRAILER' in retrieve_watched_status() else 0, 'plot': item["content"]["contentInformation"].get("longDescription", item["content"]["contentInformation"].get("description"))})
                 if len(item["content"]["contentInformation"]["images"]) > 1:
                     li.setArt({"thumb": item["content"]["contentInformation"]["images"][0]["href"], "fanart": item["content"]["contentInformation"]["images"][1]["href"]})
                 else:
