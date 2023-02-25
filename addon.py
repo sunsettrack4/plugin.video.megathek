@@ -116,8 +116,9 @@ def tv_browser(url=None):
     session = login("ngtvepg")
     enable_e = __addon__.getSetting("e")
     enable_s = __addon__.getSetting("s")
+    enable_d = __addon__.getSetting("d")
 
-    ch_list = get_channel_list(session, enable_e, enable_s)
+    ch_list = get_channel_list(session, enable_e, enable_s, enable_d)
 
     if url is None:
         tv_menu_creator(ch_list, session)
@@ -125,7 +126,7 @@ def tv_browser(url=None):
         get_channel(url, session)
 
 # RETRIEVE THE CHANNEL DICT
-def get_channel_list(session, enable_e, enable_s):
+def get_channel_list(session, enable_e, enable_s, enable_d):
     
     url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/AllChannel"
     data = '{"channelNamespace":"12","filterlist":[{"key":"IsHide","value":"-1"}],"metaDataVer":"Channel/1.1","properties":[{"include":"/channellist/logicalChannel/contentId,/channellist/logicalChannel/name,/channellist/logicalChannel/chanNo,/channellist/logicalChannel/externalCode,/channellist/logicalChannel/categoryIds,/channellist/logicalChannel/introduce,/channellist/logicalChannel/pictures/picture/href,/channellist/logicalChannel/pictures/picture/imageType,/channellist/logicalChannel/physicalChannels/physicalChannel/mediaId,/channellist/logicalChannel/physicalChannels/physicalChannel/definition,/channellist/logicalChannel/physicalChannels/physicalChannel/externalCode,/channellist/logicalChannel/physicalChannels/physicalChannel/fileFormat","name":"logicalChannel"}],"returnSatChannel":0}'
@@ -164,6 +165,9 @@ def get_channel_list(session, enable_e, enable_s):
                 if enable_s == "true":
                     if add_dict["s"].get(pchannel['mediaId']):
                         ch['playurl'] = f"https://svc40.main.sl.t-online.de/LCID3221228{add_dict['s'][pchannel['mediaId']]}.originalserver.prod.sngtv.t-online.de/PLTV/88888888/224/3221228{add_dict['s'][pchannel['mediaId']]}/3221228{add_dict['s'][pchannel['mediaId']]}.mpd"
+                if enable_d == "true":
+                    if add_dict["d"].get(pchannel['mediaId']):
+                        ch['playurl'] = f"https://svc40.main.sl.t-online.de/LCID3221228{add_dict['d'][pchannel['mediaId']]}.originalserver.prod.sngtv.t-online.de/PLTV/88888888/224/3221228{add_dict['d'][pchannel['mediaId']]}/3221228{add_dict['d'][pchannel['mediaId']]}.mpd"
                 break
             playurl = pchannel['playurl']
             manifest_name = ch["media"][pchannel['mediaId']]
