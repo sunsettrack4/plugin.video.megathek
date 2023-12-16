@@ -683,7 +683,8 @@ def router(item):
 def login(scope):
     __login = __addon__.getSetting("username")
     __password = __addon__.getSetting("password")
-    return refresh_process(login_process(__login, __password), scope)
+    __customer_id = __addon__.getSetting("customer_id")
+    return refresh_process(login_process(__login, __password, __customer_id), scope)
 
 # RETRIEVE HIDDEN XSRF + TID VALUES TO BE TRANSMITTED TO ACCOUNTS PAGE
 def parse_input_values(content):
@@ -699,7 +700,7 @@ def parse_input_values(content):
     return f
 
 # INITIAL LOGIN
-def login_process(__username, __password):
+def login_process(__username, __password, __customer_id):
     """Login to Magenta TV via webpage using the email address as username"""
 
     session = dict()
@@ -731,6 +732,15 @@ def login_process(__username, __password):
     data.update(parse_input_values(req.content))
 
     req = requests.post(url_post, cookies=cookies, data=data, headers=header)
+
+    # STEP 3.2: SEND CUSTOMER ID
+    resp = BeautifulSoup(req.content, "html.parser")
+    if resp.find("input", {"id": "customerNr"}):
+        data = {"bdata": "", "customerNr": __customer_id, "next": ""}
+        data.update(parse_input_values(req.content))
+
+        req = requests.post(url_post, cookies=cookies, data=data, headers=header)
+        
     code = req.url.split("=")[1]
 
     # STEP 4: RETRIEVE ACCESS TOKEN FOR USER
@@ -763,6 +773,7 @@ def login_process(__username, __password):
 
     # STEP 8: GET DEVICE ID TO ACCESS WIDEVINE DRM STREAMS
     x = 0
+    user_id = ""
     while True:
         # 8.1: AUTHENTICATE
         url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/DTAuthenticate"
@@ -770,24 +781,37 @@ def login_process(__username, __password):
 
         req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
         user_data = req.json()
+
+        if user_data.get("userID"):
+            user_id = user_data["userID"]
+        elif user_id == "":
+            raise Exception("Failed to retrieve userID")
         
         if "success" in user_data["retmsg"]:
             break
         
         # 8.2: RETRIEVE AVAILABLE WEBTV DEVICE
         url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/GetDeviceList"
-        data = '{"deviceType":"2;0;5;17","userid":"' + user_data["userID"] + '"}'
+        data = '{"deviceType":"2;0;5;17","userid":"' + user_id + '"}'
 
         req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
         device_data = req.json()
-
-        for i in device_data["deviceList"]:
+        
+        for i in device_data.get("deviceList", []):
             if i.get("deviceName", "") == "WebTV":
                 uu_id = i["physicalDeviceId"]
                 break
+
+        # 8.3: REPLACE DEVICE (WEBTV DEVICE NOT FOUND)
+        if len(device_data.get("deviceList", [])) > 0:
+            url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/ReplaceDevice"
+            data = '{"orgDeviceId":"' + device_data["deviceList"][0]["deviceId"] + '","userid":"' + user_id + '"}'
+
+            req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
+            device_data = req.json()
         
         x = x + 1
-        if x > 8:
+        if x > 2:
             raise Exception("Error: Authentication failure")
              
     
