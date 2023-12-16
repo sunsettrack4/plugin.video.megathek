@@ -4,6 +4,7 @@
         <setting label="Login Settings" type="lsep"/>
         <setting label="Username/Email" type="text" id="username" default=""/>
         <setting label="Password" type="text" id="password" option="hidden"  enable="!eq(-1,)" default=""/>
+        <setting label="Customer ID" type="text" id="customer_id" default=""/>
         <setting label="Enable WOW Entertainment Package" type="bool" id="e" default="false"/>
         <setting label="Enable WOW Sports Package" type="bool" id="s" default="false"/>
         <setting label="Enable DAZN Channels" type="bool" id="d" default="false"/>
