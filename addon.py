@@ -519,7 +519,7 @@ def menu_creator(item, session):
             device_id = session["deviceId"]
             device_id_encoded = b64encode(device_id.encode()).decode()
 
-            li.setProperty('inputstream.adaptive.license_key', license_url + "|" + f'CustomDeviceId={device_id_encoded}&LAPB={lapb_encoded}' + "|R{SSM}|")
+            li.setProperty('inputstream.adaptive.license_key', license_url + "|" + f'Customclientid={device_id_encoded}&Lapb={lapb_encoded}' + "|R{SSM}|")
             li.setProperty('inputstream.adaptive.license_type', "com.widevine.alpha")
 
         li.setProperty('inputstream', 'inputstream.adaptive')
@@ -838,7 +838,7 @@ def refresh_process(session, scope):
     # RETURN UPDATED AUTH_TOKEN
     session.update(req.json())  # TOKENS (SCOPE: NGTVVOD)
 
-    url = f"https://wcps.t-online.de/bootstrap/iptv2015/v1/manifest?model=WEB-MTV&deviceId={session['deviceId']}&appname=vod&appVersion=1632&firmware=Windows+10&runtimeVersion=Mozilla%2F5.0+%28Windows+NT+10.0%3B+Win64%3B+x64%29+AppleWebKit%2F537.36+%28KHTML%2C+like+Gecko%29+Chrome%2F108.0.0.0+Safari%2F537.36&duid={session['deviceId']}%7Cresolution%3Dhdr&$redirect=false"
+    url = f"https://wcps.t-online.de/bootstrap/iptv2015/v1/manifest?model=WEB-MTV&deviceId={session['deviceId']}&appname=vod&appVersion=1792&firmware=Windows+10&runtimeVersion=Mozilla%2F5.0+%28Windows+NT+10.0%3B+Win64%3B+x64%29+AppleWebKit%2F537.36+%28KHTML%2C+like+Gecko%29+Chrome%2F120.0.0.0+Safari%2F537.36&duid={session['deviceId']}%7Cresolution%3Dhdr&$redirect=false"
     req = requests.get(url, headers=header)
 
     # GET DEVICE TOKEN
