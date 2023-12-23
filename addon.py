@@ -513,7 +513,7 @@ def menu_creator(item, session):
         if session is not None:
             license_url = "https://licf-iptv.dmm.t-online.de/v1.0/WidevineLicenseAcquisition.ashx"
             
-            lapb = '<lapb version="2"><contentNo>' + c_no + '</contentNo><profile>sl-windows</profile><auth type="sts">' + session["access_token"] + '</auth><agent>WEB-MTV</agent><recovery allow="false"/><requestId>' + str(uuid4()) + '</requestId><serviceId>MAGENTATVAPP</serviceId></lapb>'            
+            lapb = '<lapb version="2"><contentNo>' + c_no + '</contentNo><profile>sl-windows</profile><auth type="sts">' + session["access_token"] + '</auth><agent>WEB-MTV</agent><recovery allow="false"/><requestId>' + str(uuid4()) + '</requestId><serviceId>MAGENTATVAPP</serviceId></lapb>'
             lapb_encoded = urllib.parse.quote(b64encode(lapb.encode()).decode())
 
             device_id = session["deviceId"]
@@ -684,7 +684,11 @@ def login(scope):
     __login = __addon__.getSetting("username")
     __password = __addon__.getSetting("password")
     __customer_id = __addon__.getSetting("customer_id")
-    return refresh_process(login_process(__login, __password, __customer_id), scope)
+    __device_uuid = __addon__.getSetting("device_id")
+    if not __device_uuid:
+        __device_uuid = str(uuid4())
+        __addon__.setSetting("device_id", __device_uuid)
+    return refresh_process(login_process(__login, __password, __customer_id, __device_uuid), scope)
 
 # RETRIEVE HIDDEN XSRF + TID VALUES TO BE TRANSMITTED TO ACCOUNTS PAGE
 def parse_input_values(content):
@@ -700,11 +704,11 @@ def parse_input_values(content):
     return f
 
 # INITIAL LOGIN
-def login_process(__username, __password, __customer_id):
+def login_process(__username, __password, __customer_id, __device_uuid):
     """Login to Magenta TV via webpage using the email address as username"""
 
     session = dict()
-    uu_id = str(uuid4())
+    uu_id = __device_uuid
     cnonce = hashlib.md5()
     cnonce.update(f'{str(datetime.datetime.now().timestamp()).replace(".", "")[0:-3]}:00'.encode())
     cnonce = cnonce.hexdigest()
@@ -715,7 +719,19 @@ def login_process(__username, __password, __customer_id):
     #
 
     # STEP 1: GET COOKIE TOKEN (GET REQUEST)
-    url = "https://accounts.login.idm.telekom.com/oauth2/auth?client_id=10LIVESAM30000004901NGTVMAGENTA000000000&redirect_uri=https%3A%2F%2Fweb.magentatv.de%2Fauthn%2Fidm&response_type=code&scope=openid+offline_access"
+    sso_headers = {
+        "Device-Id": __device_uuid, "Session-Id": str(uuid4()), "Content-Type": "application/json", 
+        "Referer": "https://web2.magentatv.de/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    # STEP 1.1: GET LOGIN URL VIA SSO
+    url = "https://ssom.magentatv.de/login"
+    req = requests.get(url, headers=sso_headers)
+    sso_cookies = req.cookies.get_dict()
+    
+    # STEP 1.2: GET INITIAL LOGIN PAGE
+    url = req.json()["loginRedirectUrl"].replace("redirect_uri=authn", f"redirect_uri={urllib.parse.quote('https://web.magentatv.de/authn')}")
     req = requests.get(url, headers=header)
     cookies = req.cookies.get_dict()
 
@@ -741,20 +757,22 @@ def login_process(__username, __password, __customer_id):
 
         req = requests.post(url_post, cookies=cookies, data=data, headers=header)
         
-    code = req.url.split("=")[1]
+    codes = {i.split("=")[0]: i.split("=")[1] for i in req.url.split("?")[1].split("&")}
 
-    # STEP 4: RETRIEVE ACCESS TOKEN FOR USER
-    url = "https://accounts.login.idm.telekom.com/oauth2/tokens"
-    data = {"scope": "openid", "code": code, "grant_type": "authorization_code", "redirect_uri": "https://web.magentatv.de/authn/idm", "client_id": "10LIVESAM30000004901NGTVMAGENTA000000000", "claims": '{"id_token":{"urn:telekom.com:all":{"essential":false}}}'}
+    # STEP 4: RETRIEVE ACCESS TOKEN FOR VOD
+    url = f"https://ssom.magentatv.de/authenticate"
+    req = requests.post(url, headers=sso_headers, cookies=sso_cookies, 
+                        data=json.dumps({"checkRefreshToken": True, 
+                                         "returnCode": {"code": codes["code"], "state": codes["state"]}}))
+    vod_token = req.json()["userInfo"]["tokens"]["VOD"]["token"]
+    uu_id = req.json()["userInfo"]["userId"]
+    sso_cookies = req.cookies.get_dict()
 
-    req = requests.post(url, cookies=cookies, data=data, headers=header)
-    bearer = req.json()
-    
-    # STEP 5: UPDATE ACCESS TOKEN FOR TV/EPG
-    data = {"scope": "ngtvepg", "grant_type": "refresh_token", "refresh_token": bearer["refresh_token"], "client_id": "10LIVESAM30000004901NGTVMAGENTA000000000"}
-
-    req = requests.post(url, cookies=cookies, data=data, headers=header)
-    bearer = req.json()
+    # STEP 5: RETRIEVE ACCESS TOKEN FOR EPG
+    url = f"https://ssom.magentatv.de/get-tokens"
+    req = requests.post(url, headers=sso_headers, cookies=sso_cookies, 
+                        data=json.dumps({"scopes": ["EPG"]}))
+    epg_token = req.json()["tokens"]["EPG"]["token"]
     
     # STEP 6: EPG GUEST AUTH - JSESSION
     url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/Login?&T=Windows_chrome_86"
@@ -773,11 +791,10 @@ def login_process(__username, __password, __customer_id):
 
     # STEP 8: GET DEVICE ID TO ACCESS WIDEVINE DRM STREAMS
     x = 0
-    user_id = ""
     while True:
         # 8.1: AUTHENTICATE
         url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/DTAuthenticate"
-        data = '{"areaid":"1","cnonce":"' + cnonce + '","mac":"' + uu_id + '","preSharedKeyID":"NGTV000001","subnetId":"4901","templatename":"NGTV","terminalid":"' + uu_id + '","terminaltype":"WEB-MTV","terminalvendor":"WebTV","timezone":"UTC","usergroup":"OTT_NONDTISP_DT","userType":"1","utcEnable":1,"accessToken":"' + f'{bearer["access_token"]}' + '","caDeviceInfo":[{"caDeviceId":"' + uu_id + '","caDeviceType":8}],"connectType":1,"osversion":"Windows 10","softwareVersion":"1.63.2","terminalDetail":[{"key":"GUID","value":"' + uu_id + '"},{"key":"HardwareSupplier","value":"WEB-MTV"},{"key":"DeviceClass","value":"TV"},{"key":"DeviceStorage","value":0},{"key":"DeviceStorageSize","value":0}]}'
+        data = '{"areaid":"1","cnonce":"' + cnonce + '","mac":"' + uu_id + '","preSharedKeyID":"NGTV000001","subnetId":"4901","templatename":"NGTV","terminalid":"' + uu_id + '","terminaltype":"WEB-MTV","terminalvendor":"WebTV","timezone":"UTC","usergroup":"OTT_NONDTISP_DT","userType":"1","utcEnable":1,"accessToken":"' + f'{epg_token}' + '","caDeviceInfo":[{"caDeviceId":"' + uu_id + '","caDeviceType":8}],"connectType":1,"osversion":"Windows 10","softwareVersion":"1.63.2","terminalDetail":[{"key":"GUID","value":"' + uu_id + '"},{"key":"HardwareSupplier","value":"WEB-MTV"},{"key":"DeviceClass","value":"TV"},{"key":"DeviceStorage","value":0},{"key":"DeviceStorageSize","value":0}]}'
 
         req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
         user_data = req.json()
@@ -796,19 +813,13 @@ def login_process(__username, __password, __customer_id):
 
         req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
         device_data = req.json()
-        
-        for i in device_data.get("deviceList", []):
-            if i.get("deviceName", "") == "WebTV":
-                uu_id = i["physicalDeviceId"]
-                break
 
         # 8.3: REPLACE DEVICE (WEBTV DEVICE NOT FOUND)
-        if len(device_data.get("deviceList", [])) > 0:
-            url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/ReplaceDevice"
-            data = '{"orgDeviceId":"' + device_data["deviceList"][0]["deviceId"] + '","userid":"' + user_id + '"}'
+        url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/ReplaceDevice"
+        data = '{"orgDeviceId":"' + device_data["deviceList"][0]["deviceId"] + '","userid":"' + user_id + '"}'
 
-            req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
-            device_data = req.json()
+        req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
+        device_data = req.json()
         
         x = x + 1
         if x > 2:
@@ -817,7 +828,8 @@ def login_process(__username, __password, __customer_id):
     
     # SETUP SESSION
     session.update({"deviceId": req.json()["caDeviceInfo"][0]["VUID"]})  # DEVICE/TERMINAL ID
-    session.update(bearer)  # TOKENS (SCOPE: NGTVEPG)
+    session.update({"access_token": epg_token})  # SSO TOKEN (SCOPE: EPG)
+    session.update({"vod": vod_token})  # SSO TOKEN (SCOPE: VOD)
     session.update({"cookies": req.cookies.get_dict()})  # EPG COOKIES
     session.update({"userData": user_data})  # AUTH DATA
     session.update({"cnonce": cnonce})  # CNONCE
@@ -830,13 +842,7 @@ def refresh_process(session, scope):
     if scope == "ngtvepg":
         return session
 
-    url = "https://accounts.login.idm.telekom.com/oauth2/tokens"
-    data = {"scope": scope, "grant_type": "refresh_token", "refresh_token": session['refresh_token'], "client_id": "10LIVESAM30000004901NGTVMAGENTA000000000"}
-
-    req = requests.post(url, data=data, headers=header)
-
-    # RETURN UPDATED AUTH_TOKEN
-    session.update(req.json())  # TOKENS (SCOPE: NGTVVOD)
+    session.update({"access_token": session["vod"]})  # USE VOD TOKEN ALREADY RECEIVED BY SSOM
 
     url = f"https://wcps.t-online.de/bootstrap/iptv2015/v1/manifest?model=WEB-MTV&deviceId={session['deviceId']}&appname=vod&appVersion=1792&firmware=Windows+10&runtimeVersion=Mozilla%2F5.0+%28Windows+NT+10.0%3B+Win64%3B+x64%29+AppleWebKit%2F537.36+%28KHTML%2C+like+Gecko%29+Chrome%2F120.0.0.0+Safari%2F537.36&duid={session['deviceId']}%7Cresolution%3Dhdr&$redirect=false"
     req = requests.get(url, headers=header)
