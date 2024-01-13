@@ -533,6 +533,7 @@ def menu_creator(item, session):
         xbmcplugin.setResolvedUrl(__addon_handle__, True, li)
 
         t = xbmc.Player()
+        time.sleep(10)
         t.play(item=stream_url, listitem=li)
         
         if position > 0:
