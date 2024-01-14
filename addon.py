@@ -130,7 +130,8 @@ def tv_browser(url=None):
         get_channel(url, session)
 
 # RETRIEVE THE CHANNEL DICT
-def get_channel_list(session, enable_e, enable_s, enable_d):    
+def get_channel_list(session, enable_e, enable_s, enable_d):  
+
     url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/AllChannel"
     data = '{"channelNamespace":"12","filterlist":[{"key":"IsHide","value":"-1"}],"metaDataVer":"Channel/1.1","properties":[{"include":"/channellist/logicalChannel/contentId,/channellist/logicalChannel/name,/channellist/logicalChannel/chanNo,/channellist/logicalChannel/externalCode,/channellist/logicalChannel/categoryIds,/channellist/logicalChannel/introduce,/channellist/logicalChannel/pictures/picture/href,/channellist/logicalChannel/pictures/picture/imageType,/channellist/logicalChannel/physicalChannels/physicalChannel/mediaId,/channellist/logicalChannel/physicalChannels/physicalChannel/definition,/channellist/logicalChannel/physicalChannels/physicalChannel/externalCode,/channellist/logicalChannel/physicalChannels/physicalChannel/fileFormat","name":"logicalChannel"}],"returnSatChannel":0}'
     epg_cookies = session["cookies"]
@@ -473,7 +474,6 @@ def menu_creator(item, session):
 
     # Player
     if item["$type"] == "player":
-        xbmc.log(str(item))
         q = dict()
         pid = item["content"]["feature"]["metadata"].get("cmlsId", "")
         stream_id = item["content"]["feature"]["metadata"].get("id", "")
@@ -541,7 +541,7 @@ def menu_creator(item, session):
         xbmcplugin.setResolvedUrl(__addon_handle__, True, li)
 
         t = xbmc.Player()
-        time.sleep(8)
+        time.sleep(10)
         t.play(item=stream_url, listitem=li)
         
         if position > 0:
