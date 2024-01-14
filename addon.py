@@ -112,8 +112,12 @@ def checksum(id, session):
 #
 
 def tv_browser(url=None):
-    
     session = login("ngtvepg")
+
+    if session.get("persona_token"):
+        xbmcgui.Dialog().notification(__addonname__, "Das Addon unterstützt aktuell keine Live TV-Inhalte via OTT 2.0", xbmcgui.NOTIFICATION_INFO)
+        return
+    
     enable_e = __addon__.getSetting("e")
     enable_s = __addon__.getSetting("s")
     enable_d = __addon__.getSetting("d")
@@ -126,8 +130,7 @@ def tv_browser(url=None):
         get_channel(url, session)
 
 # RETRIEVE THE CHANNEL DICT
-def get_channel_list(session, enable_e, enable_s, enable_d):
-    
+def get_channel_list(session, enable_e, enable_s, enable_d):    
     url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/AllChannel"
     data = '{"channelNamespace":"12","filterlist":[{"key":"IsHide","value":"-1"}],"metaDataVer":"Channel/1.1","properties":[{"include":"/channellist/logicalChannel/contentId,/channellist/logicalChannel/name,/channellist/logicalChannel/chanNo,/channellist/logicalChannel/externalCode,/channellist/logicalChannel/categoryIds,/channellist/logicalChannel/introduce,/channellist/logicalChannel/pictures/picture/href,/channellist/logicalChannel/pictures/picture/imageType,/channellist/logicalChannel/physicalChannels/physicalChannel/mediaId,/channellist/logicalChannel/physicalChannels/physicalChannel/definition,/channellist/logicalChannel/physicalChannels/physicalChannel/externalCode,/channellist/logicalChannel/physicalChannels/physicalChannel/fileFormat","name":"logicalChannel"}],"returnSatChannel":0}'
     epg_cookies = session["cookies"]
@@ -237,6 +240,10 @@ def tv_menu_creator(ch_list, session):
 def pvr_browser(id=None, media=None, pvr_id=None):
 
     session = login("ngtvepg")
+
+    if session.get("persona_token"):
+        xbmcgui.Dialog().notification(__addonname__, "Das Addon unterstützt aktuell keine PVR-Inhalte via OTT 2.0", xbmcgui.NOTIFICATION_INFO)
+        return
 
     pvr_list = get_pvr_list(session)
 
@@ -466,6 +473,7 @@ def menu_creator(item, session):
 
     # Player
     if item["$type"] == "player":
+        xbmc.log(str(item))
         q = dict()
         pid = item["content"]["feature"]["metadata"].get("cmlsId", "")
         stream_id = item["content"]["feature"]["metadata"].get("id", "")
@@ -533,7 +541,7 @@ def menu_creator(item, session):
         xbmcplugin.setResolvedUrl(__addon_handle__, True, li)
 
         t = xbmc.Player()
-        time.sleep(10)
+        time.sleep(8)
         t.play(item=stream_url, listitem=li)
         
         if position > 0:
@@ -766,6 +774,7 @@ def login_process(__username, __password, __customer_id, __device_uuid):
                         data=json.dumps({"checkRefreshToken": True, 
                                          "returnCode": {"code": codes["code"], "state": codes["state"]}}))
     vod_token = req.json()["userInfo"]["tokens"]["VOD"]["token"]
+    persona_token = req.json()["userInfo"].get("personaToken")  # required for OTT 2.0
     uu_id = req.json()["userInfo"]["userId"]
     sso_cookies = req.cookies.get_dict()
 
@@ -775,65 +784,71 @@ def login_process(__username, __password, __customer_id, __device_uuid):
                         data=json.dumps({"scopes": ["EPG"]}))
     epg_token = req.json()["tokens"]["EPG"]["token"]
     
-    # STEP 6: EPG GUEST AUTH - JSESSION
-    url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/Login?&T=Windows_chrome_86"
-    data = {"userId": "Guest", "mac": "00:00:00:00:00:00"}
+    # STEPS FOR OTT 1.0
+    if not persona_token:
 
-    req = requests.post(url, data=data, headers=header)
-    j_session = req.cookies.get_dict()["JSESSIONID"]
+        # STEP 6: EPG GUEST AUTH - JSESSION
+        url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/Login?&T=Windows_chrome_86"
+        data = {"userId": "Guest", "mac": "00:00:00:00:00:00"}
 
-    # STEP 7: EPG USER AUTH - ALL SESSIONS
-    url = 'https://api.prod.sngtv.magentatv.de/EPG/JSON/Authenticate?SID=firstup&T=Windows_chrome_86'
-    data = '{"terminalid":"' + uu_id + '","mac":"' + uu_id + '","terminaltype":"WEBTV","utcEnable":1,"timezone":"UTC","userType":3,"terminalvendor":"Unknown","preSharedKeyID":"PC01P00002","cnonce":"' + cnonce + '"}'
-    epg_cookies = {"JSESSIONID": j_session}
+        req = requests.post(url, data=data, headers=header)
+        j_session = req.cookies.get_dict()["JSESSIONID"]
 
-    req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
-    epg_cookies = req.cookies.get_dict()
-
-    # STEP 8: GET DEVICE ID TO ACCESS WIDEVINE DRM STREAMS
-    x = 0
-    while True:
-        # 8.1: AUTHENTICATE
-        url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/DTAuthenticate"
-        data = '{"areaid":"1","cnonce":"' + cnonce + '","mac":"' + uu_id + '","preSharedKeyID":"NGTV000001","subnetId":"4901","templatename":"NGTV","terminalid":"' + uu_id + '","terminaltype":"WEB-MTV","terminalvendor":"WebTV","timezone":"UTC","usergroup":"OTT_NONDTISP_DT","userType":"1","utcEnable":1,"accessToken":"' + f'{epg_token}' + '","caDeviceInfo":[{"caDeviceId":"' + uu_id + '","caDeviceType":8}],"connectType":1,"osversion":"Windows 10","softwareVersion":"1.63.2","terminalDetail":[{"key":"GUID","value":"' + uu_id + '"},{"key":"HardwareSupplier","value":"WEB-MTV"},{"key":"DeviceClass","value":"TV"},{"key":"DeviceStorage","value":0},{"key":"DeviceStorageSize","value":0}]}'
+        # STEP 7: EPG USER AUTH - ALL SESSIONS
+        url = 'https://api.prod.sngtv.magentatv.de/EPG/JSON/Authenticate?SID=firstup&T=Windows_chrome_86'
+        data = '{"terminalid":"' + uu_id + '","mac":"' + uu_id + '","terminaltype":"WEBTV","utcEnable":1,"timezone":"UTC","userType":3,"terminalvendor":"Unknown","preSharedKeyID":"PC01P00002","cnonce":"' + cnonce + '"}'
+        epg_cookies = {"JSESSIONID": j_session}
 
         req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
-        user_data = req.json()
+        epg_cookies = req.cookies.get_dict()
 
-        if user_data.get("userID"):
-            user_id = user_data["userID"]
-        elif user_id == "":
-            raise Exception("Failed to retrieve userID")
-        
-        if "success" in user_data["retmsg"]:
-            break
-        
-        # 8.2: RETRIEVE AVAILABLE WEBTV DEVICE
-        url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/GetDeviceList"
-        data = '{"deviceType":"2;0;5;17","userid":"' + user_id + '"}'
+        # STEP 8: GET DEVICE ID TO ACCESS WIDEVINE DRM STREAMS
+        x = 0
+        while True:
+            # 8.1: AUTHENTICATE
+            url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/DTAuthenticate"
+            data = '{"areaid":"1","cnonce":"' + cnonce + '","mac":"' + uu_id + '","preSharedKeyID":"NGTV000001","subnetId":"4901","templatename":"NGTV","terminalid":"' + uu_id + '","terminaltype":"WEB-MTV","terminalvendor":"WebTV","timezone":"UTC","usergroup":"OTT_NONDTISP_DT","userType":"1","utcEnable":1,"accessToken":"' + f'{epg_token}' + '","caDeviceInfo":[{"caDeviceId":"' + uu_id + '","caDeviceType":8}],"connectType":1,"osversion":"Windows 10","softwareVersion":"1.63.2","terminalDetail":[{"key":"GUID","value":"' + uu_id + '"},{"key":"HardwareSupplier","value":"WEB-MTV"},{"key":"DeviceClass","value":"TV"},{"key":"DeviceStorage","value":0},{"key":"DeviceStorageSize","value":0}]}'
 
-        req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
-        device_data = req.json()
+            req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
+            user_data = req.json()
 
-        # 8.3: REPLACE DEVICE (WEBTV DEVICE NOT FOUND)
-        url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/ReplaceDevice"
-        data = '{"orgDeviceId":"' + device_data["deviceList"][0]["deviceId"] + '","userid":"' + user_id + '"}'
+            if user_data.get("userID"):
+                user_id = user_data["userID"]
+            elif user_id == "":
+                raise Exception("Failed to retrieve userID")
+            
+            if "success" in user_data["retmsg"]:
+                break
+            
+            # 8.2: RETRIEVE AVAILABLE WEBTV DEVICE
+            url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/GetDeviceList"
+            data = '{"deviceType":"2;0;5;17","userid":"' + user_id + '"}'
 
-        req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
-        device_data = req.json()
-        
-        x = x + 1
-        if x > 2:
-            raise Exception("Error: Authentication failure")
+            req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
+            device_data = req.json()
+
+            # 8.3: REPLACE DEVICE (WEBTV DEVICE NOT FOUND)
+            url = "https://api.prod.sngtv.magentatv.de/EPG/JSON/ReplaceDevice"
+            data = '{"orgDeviceId":"' + device_data["deviceList"][0]["deviceId"] + '","userid":"' + user_id + '"}'
+
+            req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
+            device_data = req.json()
+            
+            x = x + 1
+            if x > 2:
+                raise Exception("Error: Authentication failure")
              
     
     # SETUP SESSION
-    session.update({"deviceId": req.json()["caDeviceInfo"][0]["VUID"]})  # DEVICE/TERMINAL ID
+    session.update({"deviceId": req.json()["caDeviceInfo"][0]["VUID"] if not persona_token else __device_uuid})  # DEVICE/TERMINAL ID
     session.update({"access_token": epg_token})  # SSO TOKEN (SCOPE: EPG)
     session.update({"vod": vod_token})  # SSO TOKEN (SCOPE: VOD)
-    session.update({"cookies": req.cookies.get_dict()})  # EPG COOKIES
-    session.update({"userData": user_data})  # AUTH DATA
-    session.update({"cnonce": cnonce})  # CNONCE
+    session.update({"persona_token": persona_token})  # SSO TOKEN (AUTH)
+    
+    if not persona_token:
+        session.update({"cookies": req.cookies.get_dict()})  # EPG COOKIES
+        session.update({"userData": user_data})  # AUTH DATA
+        session.update({"cnonce": cnonce})  # CNONCE
     
     # RETURN USER-SPECIFIC COOKIE VALUES
     return session
