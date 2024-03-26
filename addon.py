@@ -773,7 +773,6 @@ def login_process(__username, __password, __customer_id, __device_uuid):
     req = requests.post(url, headers=sso_headers, cookies=sso_cookies, 
                         data=json.dumps({"checkRefreshToken": True, 
                                          "returnCode": {"code": codes["code"], "state": codes["state"]}}))
-    vod_token = req.json()["userInfo"]["tokens"]["VOD"]["token"]
     persona_token = req.json()["userInfo"].get("personaToken")  # required for OTT 2.0
     uu_id = req.json()["userInfo"]["userId"]
     sso_cookies = req.cookies.get_dict()
@@ -781,8 +780,9 @@ def login_process(__username, __password, __customer_id, __device_uuid):
     # STEP 5: RETRIEVE ACCESS TOKEN FOR EPG
     url = f"https://ssom.magentatv.de/get-tokens"
     req = requests.post(url, headers=sso_headers, cookies=sso_cookies, 
-                        data=json.dumps({"scopes": ["EPG"]}))
+                        data=json.dumps({"scopes": ["EPG", "VOD"]}))
     epg_token = req.json()["tokens"]["EPG"]["token"]
+    vod_token = req.json()["tokens"]["VOD"]["token"]
     
     # STEPS FOR OTT 1.0
     if not persona_token:
