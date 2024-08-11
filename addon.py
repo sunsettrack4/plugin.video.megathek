@@ -729,7 +729,7 @@ def login_process(__username, __password, __customer_id, __device_uuid):
 
     # STEP 1: GET COOKIE TOKEN (GET REQUEST)
     sso_headers = {
-        "Device-Id": __device_uuid, "Session-Id": str(uuid4()), "Content-Type": "application/json", 
+        "Device-Id": __device_uuid, "Session-Id": str(uuid4()), "Content-Type": "application/json", "Application-Id": "ngtv",
         "Referer": "https://web2.magentatv.de/",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
