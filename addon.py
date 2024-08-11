@@ -812,6 +812,8 @@ def login_process(__username, __password, __customer_id, __device_uuid):
             req = requests.post(url, data=data, headers=header, cookies=epg_cookies)
             user_data = req.json()
 
+            user_id = ""
+
             if user_data.get("userID"):
                 user_id = user_data["userID"]
             elif user_id == "":
