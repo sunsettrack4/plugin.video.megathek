@@ -730,7 +730,7 @@ def login_process(__username, __password, __customer_id, __device_uuid):
     # STEP 1: GET COOKIE TOKEN (GET REQUEST)
     sso_headers = {
         "Device-Id": __device_uuid, "Session-Id": str(uuid4()), "Content-Type": "application/json", "Application-Id": "ngtv",
-        "Referer": "https://web2.magentatv.de/",
+        "Referer": "https://web.magentatv.de/",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
@@ -759,8 +759,7 @@ def login_process(__username, __password, __customer_id, __device_uuid):
     req = requests.post(url_post, cookies=cookies, data=data, headers=header)
 
     # STEP 3.2: SEND CUSTOMER ID
-    resp = BeautifulSoup(req.content, "html.parser")
-    if resp.find("input", {"id": "customerNr"}):
+    if "customerNr" in str(req.content):
         data = {"bdata": "", "customerNr": __customer_id, "next": ""}
         data.update(parse_input_values(req.content))
 
