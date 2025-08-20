@@ -752,17 +752,29 @@ def login_process(__username, __password, __customer_id, __device_uuid):
     req = requests.post(url_post, cookies=cookies, data=data, headers=header)
     cookies = req.cookies.get_dict()
 
-    # STEP 3: SEND PASSWORD
-    data = {"hidden_usr": __username, "bdata": "", "pw_pwd": __password, "pw_submit": ""}
-    data.update(parse_input_values(req.content))
-
-    req = requests.post(url_post, cookies=cookies, data=data, headers=header)
-
-    # STEP 3.2: SEND CUSTOMER ID
-    if "customerNr" in str(req.content):
+    # STEP 3.1: SEND CUSTOMER ID/PASSWORD
+    if "Kundennummer" in str(req.content):
         data = {"bdata": "", "customerNr": __customer_id, "next": ""}
+    else:
+        data = {"hidden_usr": __username, "bdata": "", "pw_pwd": __password, "pw_submit": ""}
+    
+    data.update(parse_input_values(req.content))
+    req = requests.post(url_post, cookies=cookies, data=data, headers=header)
+    
+    # STEP 3.2: SEND CUSTOMER ID/PASSWORD
+    if "Kundennummer" in str(req.content):
+        data = {"bdata": "", "customerNr": __customer_id, "next": ""}
+    else:
+        data = {"passid02": __password}
+    
+    data.update(parse_input_values(req.content))
+    req = requests.post(url_post, cookies=cookies, data=data, headers=header)       
+    
+    # STEP 3.3: CHECK FOR ADDITIONAL PASSKEY STEP
+    if "Passkey: Die neue Anmeldeoption" in str(req.content):
+        data = {"pkc": "", "webauthnError": "", "dont_ask_again": ""}
+  
         data.update(parse_input_values(req.content))
-
         req = requests.post(url_post, cookies=cookies, data=data, headers=header)
         
     codes = {i.split("=")[0]: i.split("=")[1] for i in req.url.split("?")[1].split("&")}
