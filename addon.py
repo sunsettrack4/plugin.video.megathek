@@ -753,9 +753,11 @@ def login_process(__username, __password, __customer_id, __device_uuid):
     cookies = req.cookies.get_dict()
 
     # STEP 3.1: SEND CUSTOMER ID/PASSWORD
+    pw_transmitted = False
     if "Kundennummer" in str(req.content):
         data = {"bdata": "", "customerNr": __customer_id, "next": ""}
     else:
+        pw_transmitted = True
         data = {"hidden_usr": __username, "bdata": "", "pw_pwd": __password, "pw_submit": ""}
     
     data.update(parse_input_values(req.content))
@@ -764,11 +766,12 @@ def login_process(__username, __password, __customer_id, __device_uuid):
     # STEP 3.2: SEND CUSTOMER ID/PASSWORD
     if "Kundennummer" in str(req.content):
         data = {"bdata": "", "customerNr": __customer_id, "next": ""}
-    else:
+        data.update(parse_input_values(req.content))
+        req = requests.post(url_post, cookies=cookies, data=data, headers=header)
+    elif not pw_transmitted:
         data = {"passid02": __password}
-    
-    data.update(parse_input_values(req.content))
-    req = requests.post(url_post, cookies=cookies, data=data, headers=header)       
+        data.update(parse_input_values(req.content))
+        req = requests.post(url_post, cookies=cookies, data=data, headers=header)
     
     # STEP 3.3: CHECK FOR ADDITIONAL PASSKEY STEP
     if "Passkey: Die neue Anmeldeoption" in str(req.content):
