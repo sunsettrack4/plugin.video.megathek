@@ -694,10 +694,11 @@ def login(scope):
     __password = __addon__.getSetting("password")
     __customer_id = __addon__.getSetting("customer_id")
     __device_uuid = __addon__.getSetting("device_id")
+    __session_id = __addon__.getSetting("session_id")
     if not __device_uuid:
         __device_uuid = str(uuid4())
         __addon__.setSetting("device_id", __device_uuid)
-    return refresh_process(login_process(__login, __password, __customer_id, __device_uuid), scope)
+    return refresh_process(login_process(__login, __password, __customer_id, __device_uuid, __session_id), scope)
 
 # RETRIEVE HIDDEN XSRF + TID VALUES TO BE TRANSMITTED TO ACCOUNTS PAGE
 def parse_input_values(content):
@@ -713,7 +714,7 @@ def parse_input_values(content):
     return f
 
 # INITIAL LOGIN
-def login_process(__username, __password, __customer_id, __device_uuid):
+def login_process(__username, __password, __customer_id, __device_uuid, __session_id):
     """Login to Magenta TV via webpage using the email address as username"""
 
     session = dict()
@@ -721,6 +722,13 @@ def login_process(__username, __password, __customer_id, __device_uuid):
     cnonce = hashlib.md5()
     cnonce.update(f'{str(datetime.datetime.now().timestamp()).replace(".", "")[0:-3]}:00'.encode())
     cnonce = cnonce.hexdigest()
+
+    connect = None
+    if __session_id == "true":
+        try:
+            connect = requests.get("http://localhost:4700/api/get-session").json()["cookies"]
+        except:
+            pass
     
 
     #
@@ -734,62 +742,75 @@ def login_process(__username, __password, __customer_id, __device_uuid):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    # STEP 1.1: GET LOGIN URL VIA SSO
-    url = "https://ssom.magentatv.de/login"
-    req = requests.get(url, headers=sso_headers)
-    sso_cookies = req.cookies.get_dict()
-    
-    # STEP 1.2: GET INITIAL LOGIN PAGE
-    url = req.json()["loginRedirectUrl"].replace("redirect_uri=authn", f"redirect_uri={urllib.parse.quote('https://web.magentatv.de/authn')}")
-    req = requests.get(url, headers=header)
-    cookies = req.cookies.get_dict()
+    # AUTH USING USER/PW
+    if not connect:
 
-    # STEP 2: SEND USERNAME/MAIL 
-    data = {"x-show-cancel": "false", "bdata": "", "pw_usr": __username, "pw_submit": "", "hidden_pwd": ""}
-    data.update(parse_input_values(req.content))
+        # STEP 1.1: GET LOGIN URL VIA SSO
+        url = "https://ssom.magentatv.de/login"
+        req = requests.get(url, headers=sso_headers)
+        sso_cookies = req.cookies.get_dict()
+        
+        # STEP 1.2: GET INITIAL LOGIN PAGE
+        url = req.json()["loginRedirectUrl"].replace("redirect_uri=authn", f"redirect_uri={urllib.parse.quote('https://web.magentatv.de/authn')}")
+        req = requests.get(url, headers=header)
+        cookies = req.cookies.get_dict()
 
-    url_post = "https://accounts.login.idm.telekom.com/factorx"
-    req = requests.post(url_post, cookies=cookies, data=data, headers=header)
-    cookies = req.cookies.get_dict()
-
-    # STEP 3.1: SEND CUSTOMER ID/PASSWORD
-    pw_transmitted = False
-    if "Kundennummer" in str(req.content):
-        data = {"bdata": "", "customerNr": __customer_id, "next": ""}
-    else:
-        pw_transmitted = True
-        data = {"hidden_usr": __username, "bdata": "", "pw_pwd": __password, "pw_submit": ""}
-    
-    data.update(parse_input_values(req.content))
-    req = requests.post(url_post, cookies=cookies, data=data, headers=header)
-    
-    # STEP 3.2: SEND CUSTOMER ID/PASSWORD
-    if "Kundennummer" in str(req.content):
-        data = {"bdata": "", "customerNr": __customer_id, "next": ""}
+        # STEP 2: SEND USERNAME/MAIL 
+        data = {"x-show-cancel": "false", "bdata": "", "pw_usr": __username, "pw_submit": "", "hidden_pwd": ""}
         data.update(parse_input_values(req.content))
+
+        url_post = "https://accounts.login.idm.telekom.com/factorx"
         req = requests.post(url_post, cookies=cookies, data=data, headers=header)
-    elif not pw_transmitted:
-        data = {"passid02": __password}
-        data.update(parse_input_values(req.content))
-        req = requests.post(url_post, cookies=cookies, data=data, headers=header)
-    
-    # STEP 3.3: CHECK FOR ADDITIONAL PASSKEY STEP
-    if "Passkey: Die neue Anmeldeoption" in str(req.content):
-        data = {"pkc": "", "webauthnError": "", "dont_ask_again": ""}
-  
+        cookies = req.cookies.get_dict()
+
+        # STEP 3.1: SEND CUSTOMER ID/PASSWORD
+        pw_transmitted = False
+        if "Kundennummer" in str(req.content):
+            data = {"bdata": "", "customerNr": __customer_id, "next": ""}
+        else:
+            pw_transmitted = True
+            data = {"hidden_usr": __username, "bdata": "", "pw_pwd": __password, "pw_submit": ""}
+        
         data.update(parse_input_values(req.content))
         req = requests.post(url_post, cookies=cookies, data=data, headers=header)
         
-    codes = {i.split("=")[0]: i.split("=")[1] for i in req.url.split("?")[1].split("&")}
+        # STEP 3.2: SEND CUSTOMER ID/PASSWORD
+        if "Kundennummer" in str(req.content):
+            data = {"bdata": "", "customerNr": __customer_id, "next": ""}
+            data.update(parse_input_values(req.content))
+            req = requests.post(url_post, cookies=cookies, data=data, headers=header)
+        elif not pw_transmitted:
+            data = {"passid02": __password}
+            data.update(parse_input_values(req.content))
+            req = requests.post(url_post, cookies=cookies, data=data, headers=header)
+        
+        # STEP 3.3: CHECK FOR ADDITIONAL PASSKEY STEP
+        if "Passkey: Die neue Anmeldeoption" in str(req.content):
+            data = {"pkc": "", "webauthnError": "", "dont_ask_again": ""}
+    
+            data.update(parse_input_values(req.content))
+            req = requests.post(url_post, cookies=cookies, data=data, headers=header)
+            
+        codes = {i.split("=")[0]: i.split("=")[1] for i in req.url.split("?")[1].split("&")}
 
-    # STEP 4: RETRIEVE ACCESS TOKEN FOR VOD
-    url = f"https://ssom.magentatv.de/authenticate"
-    req = requests.post(url, headers=sso_headers, cookies=sso_cookies, 
-                        data=json.dumps({"checkRefreshToken": True, 
-                                         "returnCode": {"code": codes["code"], "state": codes["state"]}}))
-    persona_token = req.json()["userInfo"].get("personaToken")  # required for OTT 2.0
-    uu_id = req.json()["userInfo"]["userId"]
-    sso_cookies = req.cookies.get_dict()
+        # STEP 4: RETRIEVE ACCESS TOKEN FOR VOD
+        url = f"https://ssom.magentatv.de/authenticate"
+        req = requests.post(url, headers=sso_headers, cookies=sso_cookies, 
+                            data=json.dumps({"checkRefreshToken": True, 
+                                            "returnCode": {"code": codes["code"], "state": codes["state"]}}))
+        persona_token = req.json()["userInfo"].get("personaToken")  # required for OTT 2.0
+        uu_id = req.json()["userInfo"]["userId"]
+        sso_cookies = req.cookies.get_dict()
+    
+    # AUTH USING CONNECT SID COOKIE
+    else:
+
+        url = f"https://ssom.magentatv.de/authenticate"
+        req = requests.post(url, headers=sso_headers, cookies=connect, 
+                            data=json.dumps({"freemium": True}))
+        persona_token = req.json()["userInfo"].get("personaToken")  # required for OTT 2.0
+        uu_id = req.json()["userInfo"]["userId"]
+        sso_cookies = req.cookies.get_dict()
 
     # STEP 5: RETRIEVE ACCESS TOKEN FOR EPG
     url = f"https://ssom.magentatv.de/get-tokens"

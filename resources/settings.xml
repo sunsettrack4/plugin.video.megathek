@@ -2,6 +2,7 @@
 <settings>
     <category label="Settings">
         <setting label="Login Settings" type="lsep"/>
+        <setting label="Retrieve session via service add-on" type="bool" id="session_id" default="false"/>
         <setting label="Username/Email" type="text" id="username" default=""/>
         <setting label="Password" type="text" id="password" option="hidden"  enable="!eq(-1,)" default=""/>
         <setting label="Customer ID" type="text" id="customer_id" default=""/>
